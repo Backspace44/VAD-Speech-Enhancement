@@ -12,6 +12,10 @@ import soundfile as sf
 
 from src import config
 from src.dsp.vad_energy_zcr import EnergyZCRVAD, EnergyZCRVADConfig
+from src.utils.audio_io import ensure_mono, resample_audio
+
+
+_REPORTED_RESAMPLES: set[Path] = set()
 
 
 def _build_clean_index(split: str) -> Dict[str, Path]:
@@ -48,6 +52,24 @@ def _extract_utt_id_from_noisy(stem: str) -> str:
     if "_snr" in stem:
         return stem.split("_snr")[0]
     return stem
+
+
+def _resample_if_needed(
+    sig: np.ndarray,
+    sample_rate: int,
+    target_sample_rate: int,
+    path: Path,
+    verbose: bool,
+) -> np.ndarray:
+    if sample_rate == target_sample_rate:
+        return ensure_mono(sig)
+    if verbose and path not in _REPORTED_RESAMPLES:
+        print(
+            f"Resampling clean speech for VAD: {path.name} "
+            f"({sample_rate} Hz -> {target_sample_rate} Hz)"
+        )
+        _REPORTED_RESAMPLES.add(path)
+    return resample_audio(sig, sample_rate, target_sample_rate)
 
 
 def generate_vad_labels_for_split(
@@ -121,14 +143,7 @@ def generate_vad_labels_for_split(
         
         clean_path = clean_index[utt_id]
         clean, sr_c = sf.read(clean_path)
-        
-        if sr_c != sr_target:
-            raise RuntimeError(
-                f"Unexpected sample rate {sr_c} in {clean_path}, expected {sr_target}"
-            )
-        
-        if clean.ndim > 1:
-            clean = np.mean(clean, axis=1)
+        clean = _resample_if_needed(clean, sr_c, sr_target, clean_path, verbose)
         
         # Generate VAD labels using the adaptive detector
         if label_mode == "soft":

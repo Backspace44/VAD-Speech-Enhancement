@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from math import gcd
 import re
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+from scipy.signal import resample_poly
 
 
 def normalize_noisy_stem(stem: str) -> str:
@@ -42,11 +44,36 @@ def find_matched_file_pairs(
     return [(clean_stems[stem], noisy_stems[stem]) for stem in common_stems]
 
 
-def load_audio_mono(path: Path) -> tuple[np.ndarray, int]:
-    """Load an audio file and convert it to mono."""
-    audio, sample_rate = sf.read(path)
+def ensure_mono(audio: np.ndarray) -> np.ndarray:
+    """Convert an audio array to mono float32."""
     if np.ndim(audio) > 1:
         audio = np.mean(audio, axis=1)
+    return audio.astype(np.float32, copy=False)
+
+
+def resample_audio(
+    audio: np.ndarray,
+    sample_rate: int,
+    target_sample_rate: int,
+) -> np.ndarray:
+    """Resample audio to the target sample rate using polyphase filtering."""
+    audio = ensure_mono(audio)
+    if sample_rate == target_sample_rate:
+        return audio
+
+    divisor = gcd(int(sample_rate), int(target_sample_rate))
+    up = int(target_sample_rate) // divisor
+    down = int(sample_rate) // divisor
+    return resample_poly(audio, up, down).astype(np.float32, copy=False)
+
+
+def load_audio_mono(path: Path, target_sample_rate: int | None = None) -> tuple[np.ndarray, int]:
+    """Load an audio file, convert it to mono, and optionally resample it."""
+    audio, sample_rate = sf.read(path)
+    audio = ensure_mono(audio)
+    if target_sample_rate is not None and sample_rate != target_sample_rate:
+        audio = resample_audio(audio, sample_rate, target_sample_rate)
+        sample_rate = target_sample_rate
     return audio, sample_rate
 
 

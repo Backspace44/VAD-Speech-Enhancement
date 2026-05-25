@@ -97,6 +97,7 @@ python -m src.tools.project_cli compare-vad -- --split test --max-files 20
 
 - VoiceBank-DEMAND: 824 pairs train, 824 test
 - LibriSpeech + DEMAND: 2620 files x 3 SNR levels (0, 5, 10 dB)
+- LibriSpeech/DEMAND preparation resamples clean speech and noise on the fly to 16 kHz when source files use a different sample rate.
 
 ## Results
 

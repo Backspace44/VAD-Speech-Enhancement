@@ -5,8 +5,10 @@ import numpy as np
 import soundfile as sf
 
 from src import config
+from src.utils.audio_io import ensure_mono, resample_audio
 
 RNG_SEED = 0
+_REPORTED_RESAMPLES: set[Path] = set()
 
 def _list_clean_flacs(split: str) -> list[Path]:
     """
@@ -32,10 +34,18 @@ def _list_noise_wavs(split: str) -> list[Path]:
     return files
 
 def _ensure_mono(sig: np.ndarray) -> np.ndarray:
-    if sig.ndim == 1:
-        return sig.astype(np.float32)
-    # Average both channels for proper stereo-to-mono conversion
-    return np.mean(sig, axis=1).astype(np.float32)
+    return ensure_mono(sig)
+
+def _resample_if_needed(sig: np.ndarray, sample_rate: int, target_sample_rate: int, path: Path) -> np.ndarray:
+    if sample_rate == target_sample_rate:
+        return sig.astype(np.float32, copy=False)
+    if path not in _REPORTED_RESAMPLES:
+        print(
+            f"[mix_librispeech_with_demand] Resampling {path.name}: "
+            f"{sample_rate} Hz -> {target_sample_rate} Hz"
+        )
+        _REPORTED_RESAMPLES.add(path)
+    return resample_audio(sig, sample_rate, target_sample_rate)
 
 def _match_length(noise: np.ndarray, target_len: int, rng: np.random.Generator) -> np.ndarray:
     """Repeat sau crop astfel încât len(noise) == target_len."""
@@ -79,19 +89,13 @@ def generate_mixtures_for_split(split: str,
     for clean_path in clean_files:
         clean, sr_c = sf.read(clean_path)
         clean = _ensure_mono(clean)
-        if sr_c != sr_target:
-            raise RuntimeError(
-                f"Unexpected sample rate {sr_c} in {clean_path}, expected {sr_target}"
-            )
+        clean = _resample_if_needed(clean, sr_c, sr_target, clean_path)
 
         for snr_db in snr_list:
             noise_path = noise_files[int(rng.integers(0, len(noise_files)))]
             noise, sr_n = sf.read(noise_path)
             noise = _ensure_mono(noise)
-            if sr_n != sr_target:
-                raise RuntimeError(
-                    f"Unexpected noise sample rate {sr_n} in {noise_path}, expected {sr_target}"
-                )
+            noise = _resample_if_needed(noise, sr_n, sr_target, noise_path)
 
             noise_matched = _match_length(noise, len(clean), rng)
             noisy = _mix_at_snr(clean, noise_matched, snr_db)
