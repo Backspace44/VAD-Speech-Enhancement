@@ -429,6 +429,7 @@ def main():
         val_vad_dir=dataset_dirs['val_vad_dir'],
         use_vad_labels=config.DATASET_CONFIG.get('use_vad_labels', False),
         vad_soft_mask_floor=config.DATASET_CONFIG.get('vad_soft_mask_floor', 0.0),
+        complex_mask_clip=config.MODEL_CONFIG.get('complex_mask_clip', 5.0),
     )
 
     logger.info(f"Train batches: {len(train_loader)}")

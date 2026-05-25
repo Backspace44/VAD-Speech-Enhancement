@@ -11,6 +11,19 @@ from src.train.checkpointing import save_best_model_checkpoint, save_checkpoint
 from src.train.train_setup import clip_gradients, step_scheduler_batch
 
 
+def select_model_batch_tensors(batch: dict) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the input and target tensors for the active mask type."""
+    if config.MODEL_CONFIG.get("mask_type") == "complex":
+        return (
+            batch["noisy_complex"].to(config.DEVICE),
+            batch["complex_mask"].to(config.DEVICE),
+        )
+    return (
+        batch["noisy_mag"].to(config.DEVICE),
+        batch["ideal_mask"].to(config.DEVICE),
+    )
+
+
 def run_training(
     *,
     model,
@@ -157,14 +170,13 @@ def train_one_epoch(
             logger.info(f" Final checkpoint saved: {checkpoint_path.name}")
             break
 
-        noisy_mag = batch["noisy_mag"].to(config.DEVICE)
-        ideal_mask = batch["ideal_mask"].to(config.DEVICE)
+        model_input, target_mask = select_model_batch_tensors(batch)
         optimizer.zero_grad()
 
         if scaler:
             with autocast("cuda"):
-                predicted_mask = model(noisy_mag)
-                loss = criterion(predicted_mask, ideal_mask)
+                predicted_mask = model(model_input)
+                loss = criterion(predicted_mask, target_mask)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             grad_norm = clip_gradients(model)
@@ -172,8 +184,8 @@ def train_one_epoch(
             scaler.update()
             step_scheduler_batch(scheduler, scheduler_type)
         else:
-            predicted_mask = model(noisy_mag)
-            loss = criterion(predicted_mask, ideal_mask)
+            predicted_mask = model(model_input)
+            loss = criterion(predicted_mask, target_mask)
             loss.backward()
             grad_norm = clip_gradients(model)
             optimizer.step()
@@ -216,16 +228,15 @@ def validate_one_epoch(*, model, criterion, val_loader, scaler):
 
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation"):
-            noisy_mag = batch["noisy_mag"].to(config.DEVICE)
-            ideal_mask = batch["ideal_mask"].to(config.DEVICE)
+            model_input, target_mask = select_model_batch_tensors(batch)
 
             if scaler:
                 with autocast("cuda"):
-                    predicted_mask = model(noisy_mag)
-                    loss = criterion(predicted_mask, ideal_mask)
+                    predicted_mask = model(model_input)
+                    loss = criterion(predicted_mask, target_mask)
             else:
-                predicted_mask = model(noisy_mag)
-                loss = criterion(predicted_mask, ideal_mask)
+                predicted_mask = model(model_input)
+                loss = criterion(predicted_mask, target_mask)
             val_loss += loss.item()
 
     return val_loss / len(val_loader)

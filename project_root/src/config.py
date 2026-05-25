@@ -127,6 +127,11 @@ MODEL_CONFIG = {
     "use_attention": False,  # Disable attention for speed
     "use_residual": False,
     "use_depthwise": False,
+    "output_channels": 1,
+    "output_activation": "sigmoid",
+    "output_scale": 1.0,
+    "mask_type": "magnitude",
+    "complex_mask_clip": 5.0,
 }
 
 
@@ -179,6 +184,22 @@ MODEL_VARIANTS = {
         "description": "Balanced residual model (~2.9M params) - STAGE 2 RECOMMENDED",
         "expected_params": 2_900_000,
     },
+
+    "complex_balanced_res": {
+        "in_channels": 2,
+        "base_channels": 32,
+        "use_lstm": True,
+        "use_attention": True,
+        "use_residual": True,
+        "use_depthwise": False,
+        "output_channels": 2,
+        "output_activation": "tanh",
+        "output_scale": 5.0,
+        "mask_type": "complex",
+        "complex_mask_clip": 5.0,
+        "description": "Complex MaskNet with residual U-Net blocks for real/imaginary CRM estimation",
+        "expected_params": 2_950_000,
+    },
     
     "large": {
         "base_channels": 48,
@@ -216,11 +237,17 @@ def set_active_model_variant(variant_name: str):
     ACTIVE_MODEL_VARIANT = variant_name
     variant = MODEL_VARIANTS[variant_name]
     MODEL_CONFIG.update({
+        "in_channels": variant.get("in_channels", 1),
         "base_channels": variant["base_channels"],
         "use_lstm": variant["use_lstm"],
         "use_attention": variant["use_attention"],
         "use_residual": variant.get("use_residual", False),
         "use_depthwise": variant.get("use_depthwise", False),
+        "output_channels": variant.get("output_channels", 1),
+        "output_activation": variant.get("output_activation", "sigmoid"),
+        "output_scale": variant.get("output_scale", 1.0),
+        "mask_type": variant.get("mask_type", "magnitude"),
+        "complex_mask_clip": variant.get("complex_mask_clip", 5.0),
     })
 
 
@@ -472,6 +499,30 @@ EXPERIMENT_PRESETS = {
             "vad_soft_mask_floor": 0.15,
         },
         "description": "Recommended LibriSpeech setup with soft VAD gating + balanced_res + AdamW + OneCycleLR",
+    },
+    "librispeech_complex_masknet_recommended": {
+        "model": "complex_balanced_res",
+        "optimizer": "adamw",
+        "training": "stage2_recommended",
+        "loss": "mse",
+        "dataset": {
+            "dataset": "librispeech",
+            "use_vad_labels": True,
+            "vad_label_set": "adaptive_soft_v1",
+            "vad_soft_mask_floor": 0.15,
+        },
+        "description": "Complex MaskNet on LibriSpeech + soft VAD gating + AdamW + OneCycleLR",
+    },
+    "voicebank_complex_masknet": {
+        "model": "complex_balanced_res",
+        "optimizer": "adamw",
+        "training": "stage2_recommended",
+        "loss": "mse",
+        "dataset": {
+            "dataset": "voicebank",
+            "use_vad_labels": False,
+        },
+        "description": "Complex MaskNet VoiceBank setup with complex ratio mask targets",
     },
     "librispeech_fast_benchmark": {
         "model": "tiny_fast",
@@ -928,11 +979,15 @@ def print_config_summary():
     if ACTIVE_MODEL_VARIANT in MODEL_VARIANTS:
         variant = MODEL_VARIANTS[ACTIVE_MODEL_VARIANT]
         print(f"  Description: {variant['description']}")
+        print(f"  Input Channels: {MODEL_CONFIG['in_channels']}")
+        print(f"  Output Channels: {MODEL_CONFIG['output_channels']}")
         print(f"  Base Channels: {MODEL_CONFIG['base_channels']}")
         print(f"  LSTM: {MODEL_CONFIG['use_lstm']}")
         print(f"  Attention: {MODEL_CONFIG['use_attention']}")
         print(f"  Residual Blocks: {MODEL_CONFIG.get('use_residual', False)}")
         print(f"  Depthwise Blocks: {MODEL_CONFIG.get('use_depthwise', False)}")
+        print(f"  Mask Type: {MODEL_CONFIG.get('mask_type', 'magnitude')}")
+        print(f"  Output Activation: {MODEL_CONFIG.get('output_activation', 'sigmoid')}")
         print(f"  Expected Params: ~{variant['expected_params']:,}")
     
     print(f"\nTraining:")

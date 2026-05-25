@@ -78,6 +78,60 @@ def from_mag_phase(mag: np.ndarray, phase: np.ndarray) -> np.ndarray:
     return mag * np.exp(1j * phase)
 
 
+def complex_to_channels(spec: torch.Tensor) -> torch.Tensor:
+    """Convert a complex spectrogram to real/imaginary channels."""
+    if not torch.is_complex(spec):
+        raise TypeError("Expected a complex tensor")
+    if spec.dim() == 2:
+        return torch.stack((spec.real, spec.imag), dim=0)
+    if spec.dim() == 3:
+        return torch.stack((spec.real, spec.imag), dim=1)
+    raise ValueError(f"Expected spectrogram with 2 or 3 dimensions, got {spec.dim()}")
+
+
+def channels_to_complex(channels: torch.Tensor) -> torch.Tensor:
+    """Convert real/imaginary channels back to a complex spectrogram."""
+    if channels.dim() == 3 and channels.shape[0] == 2:
+        return torch.complex(channels[0], channels[1])
+    if channels.dim() == 4 and channels.shape[1] == 2:
+        return torch.complex(channels[:, 0], channels[:, 1])
+    raise ValueError(
+        "Expected real/imaginary channels with shape [2, F, T] or [B, 2, F, T]"
+    )
+
+
+def compute_complex_ratio_mask(
+    clean_complex: torch.Tensor,
+    noisy_complex: torch.Tensor,
+    eps: float = 1e-8,
+    clip_value: float | None = 5.0,
+) -> torch.Tensor:
+    """
+    Compute the complex ratio mask (CRM) that maps noisy STFT to clean STFT.
+
+    The returned tensor uses two channels: [real_mask, imaginary_mask].
+    """
+    noisy_real = noisy_complex.real
+    noisy_imag = noisy_complex.imag
+    clean_real = clean_complex.real
+    clean_imag = clean_complex.imag
+
+    denom = noisy_real.square() + noisy_imag.square() + eps
+    mask_real = (clean_real * noisy_real + clean_imag * noisy_imag) / denom
+    mask_imag = (clean_imag * noisy_real - clean_real * noisy_imag) / denom
+
+    dim = 0 if clean_complex.dim() == 2 else 1
+    mask = torch.stack((mask_real, mask_imag), dim=dim)
+    if clip_value is not None and clip_value > 0:
+        mask = torch.clamp(mask, -clip_value, clip_value)
+    return mask
+
+
+def apply_complex_mask(noisy_complex: torch.Tensor, complex_mask: torch.Tensor) -> torch.Tensor:
+    """Apply a two-channel complex mask to a noisy complex spectrogram."""
+    return noisy_complex * channels_to_complex(complex_mask)
+
+
 def compute_stft(
     audio: torch.Tensor,
     n_fft: int = None,
@@ -193,4 +247,46 @@ def inverse_stft(
     if squeeze_output:
         audio = audio.squeeze(0)
     
+    return audio
+
+
+def inverse_complex_stft(
+    complex_spectrogram: torch.Tensor,
+    n_fft: int = None,
+    hop_length: int = None,
+    win_length: int = None,
+    length: int = None,
+) -> torch.Tensor:
+    """
+    Inverse STFT directly from a complex spectrogram tensor.
+
+    Args:
+        complex_spectrogram: Complex tensor [B, F, T] or [F, T]
+    """
+    if n_fft is None:
+        n_fft = config.N_FFT
+    if hop_length is None:
+        hop_length = config.HOP_LEN
+    if win_length is None:
+        win_length = config.FRAME_LEN
+
+    if complex_spectrogram.dim() == 2:
+        complex_spectrogram = complex_spectrogram.unsqueeze(0)
+        squeeze_output = True
+    else:
+        squeeze_output = False
+
+    window = torch.hann_window(win_length, device=complex_spectrogram.device)
+    audio = torch.istft(
+        complex_spectrogram,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        window=window,
+        center=True,
+        length=length,
+    )
+
+    if squeeze_output:
+        audio = audio.squeeze(0)
     return audio

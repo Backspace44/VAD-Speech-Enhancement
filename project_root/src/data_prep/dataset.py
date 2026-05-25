@@ -12,7 +12,11 @@ from typing import Optional, Tuple, List, Callable
 import random
 import logging
 
-from src.dsp.stft_utils import compute_stft
+from src.dsp.stft_utils import (
+    complex_to_channels,
+    compute_complex_ratio_mask,
+    compute_stft,
+)
 from src.dsp.preprocessing import AudioPreprocessor
 from src.data_prep.augmentation import create_audio_augmenter
 from src.utils.audio_io import find_matched_file_pairs
@@ -63,6 +67,7 @@ class SpeechEnhancementDataset(Dataset):
         vad_dir: Optional[Path] = None,
         use_vad_labels: bool = False,
         vad_soft_mask_floor: float = 0.0,
+        complex_mask_clip: float = 5.0,
     ):
         super().__init__()
         
@@ -80,6 +85,7 @@ class SpeechEnhancementDataset(Dataset):
         self.vad_dir = Path(vad_dir) if vad_dir else None
         self.use_vad_labels = use_vad_labels
         self.vad_soft_mask_floor = float(max(0.0, min(1.0, vad_soft_mask_floor)))
+        self.complex_mask_clip = complex_mask_clip
         
         matched_pairs = find_matched_file_pairs(
             self.clean_dir,
@@ -130,7 +136,9 @@ class SpeechEnhancementDataset(Dataset):
         Returns:
             dict with keys:
                 - 'noisy_mag': Noisy magnitude spectrogram [1, freq, time]
+                - 'noisy_complex': Noisy complex STFT as real/imag channels [2, freq, time]
                 - 'clean_mag': Clean magnitude spectrogram [1, freq, time]
+                - 'complex_mask': Complex ratio mask target [2, freq, time]
                 - 'noisy_phase': Noisy phase spectrogram [freq, time]
                 - 'noisy_audio': Noisy waveform (if return_audio=True)
                 - 'clean_audio': Clean waveform (if return_audio=True)
@@ -197,42 +205,57 @@ class SpeechEnhancementDataset(Dataset):
             noisy_audio = torch.from_numpy(noisy_audio).float()
         
 
-        # Compute spectrograms for clean and noisy
-        clean_mag, _ = compute_stft(
+        # Compute complex spectrograms for clean and noisy.
+        clean_complex = compute_stft(
             clean_audio,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
-            win_length=self.win_length
+            win_length=self.win_length,
+            return_complex=True,
         )
-        noisy_mag, noisy_phase = compute_stft(
+        noisy_complex = compute_stft(
             noisy_audio,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
-            win_length=self.win_length
+            win_length=self.win_length,
+            return_complex=True,
         )
+        clean_mag = clean_complex.abs()
+        noisy_mag = noisy_complex.abs()
+        noisy_phase = noisy_complex.angle()
         
         # Compute noise magnitude for proper IRM calculation
         # Note: |noisy| != |clean| + |noise| due to phase differences
         # We approximate noise as noisy - clean in time domain, then take STFT
         noise_audio = noisy_audio - clean_audio
-        noise_mag, _ = compute_stft(
+        noise_complex = compute_stft(
             noise_audio,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
-            win_length=self.win_length
+            win_length=self.win_length,
+            return_complex=True,
         )
+        noise_mag = noise_complex.abs()
         
         # Add channel dimension
         clean_mag = clean_mag.unsqueeze(0)
         noisy_mag = noisy_mag.unsqueeze(0)
         noise_mag = noise_mag.unsqueeze(0)
+        noisy_complex_channels = complex_to_channels(noisy_complex)
         
         # Compute Ideal Ratio Mask (IRM): clean / (clean + noise)
         eps = 1e-8
         ideal_mask = clean_mag / (clean_mag + noise_mag + eps)
         ideal_mask = torch.clamp(ideal_mask, 0.0, 1.0)
+        complex_mask = compute_complex_ratio_mask(
+            clean_complex,
+            noisy_complex,
+            eps=eps,
+            clip_value=self.complex_mask_clip,
+        )
         
         # Apply VAD labels if available (force mask to 0 in silence regions)
+        vad_gate = None
         if self.use_vad_labels and self.vad_dir:
             vad_labels = self._load_vad_labels(idx)
             if vad_labels is not None:
@@ -259,12 +282,15 @@ class SpeechEnhancementDataset(Dataset):
 
                 # Shape: [1, freq, time] * [time] -> broadcast over freq dimension
                 ideal_mask = ideal_mask * vad_gate.view(1, 1, -1)
+                complex_mask = complex_mask * vad_gate.view(1, 1, -1)
         
 
         output = {
             'noisy_mag': noisy_mag,
+            'noisy_complex': noisy_complex_channels,
             'clean_mag': clean_mag,
             'ideal_mask': ideal_mask,
+            'complex_mask': complex_mask,
             'noisy_phase': noisy_phase,
             'filename': self.clean_files[idx].name
         }
@@ -306,8 +332,10 @@ def collate_fn_pad(batch):
     max_time = max(item['noisy_mag'].shape[-1] for item in batch)
     
     batch_noisy_mag = []
+    batch_noisy_complex = []
     batch_clean_mag = []
     batch_ideal_mask = []
+    batch_complex_mask = []
     batch_noisy_phase = []
     filenames = []
     
@@ -319,21 +347,27 @@ def collate_fn_pad(batch):
     
     for item in batch:
         noisy_mag = item['noisy_mag']
+        noisy_complex = item['noisy_complex']
         clean_mag = item['clean_mag']
         ideal_mask = item['ideal_mask']
+        complex_mask = item['complex_mask']
         noisy_phase = item['noisy_phase']
         
         time_len = noisy_mag.shape[-1]
         if time_len < max_time:
             pad_len = max_time - time_len
             noisy_mag = torch.nn.functional.pad(noisy_mag, (0, pad_len))
+            noisy_complex = torch.nn.functional.pad(noisy_complex, (0, pad_len))
             clean_mag = torch.nn.functional.pad(clean_mag, (0, pad_len))
             ideal_mask = torch.nn.functional.pad(ideal_mask, (0, pad_len))
+            complex_mask = torch.nn.functional.pad(complex_mask, (0, pad_len))
             noisy_phase = torch.nn.functional.pad(noisy_phase, (0, pad_len))
         
         batch_noisy_mag.append(noisy_mag)
+        batch_noisy_complex.append(noisy_complex)
         batch_clean_mag.append(clean_mag)
         batch_ideal_mask.append(ideal_mask)
+        batch_complex_mask.append(complex_mask)
         batch_noisy_phase.append(noisy_phase)
         filenames.append(item['filename'])
         
@@ -344,8 +378,10 @@ def collate_fn_pad(batch):
     
     result = {
         'noisy_mag': torch.stack(batch_noisy_mag),
+        'noisy_complex': torch.stack(batch_noisy_complex),
         'clean_mag': torch.stack(batch_clean_mag),
         'ideal_mask': torch.stack(batch_ideal_mask),
+        'complex_mask': torch.stack(batch_complex_mask),
         'noisy_phase': torch.stack(batch_noisy_phase),
         'filename': filenames
     }
@@ -380,6 +416,7 @@ def create_dataloaders(
     val_vad_dir: Optional[Path] = None,
     use_vad_labels: bool = False,
     vad_soft_mask_floor: float = 0.0,
+    complex_mask_clip: float = 5.0,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create optimized train and validation dataloaders.
@@ -442,6 +479,7 @@ def create_dataloaders(
         vad_dir=train_vad_dir,
         use_vad_labels=use_vad_labels,
         vad_soft_mask_floor=vad_soft_mask_floor,
+        complex_mask_clip=complex_mask_clip,
     )
     
     val_dataset = SpeechEnhancementDataset(
@@ -460,6 +498,7 @@ def create_dataloaders(
         vad_dir=val_vad_dir,
         use_vad_labels=use_vad_labels,
         vad_soft_mask_floor=vad_soft_mask_floor,
+        complex_mask_clip=complex_mask_clip,
     )
     
 

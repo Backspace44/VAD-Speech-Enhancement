@@ -29,6 +29,10 @@ python -m src.train.train_mask_model --experiment-preset voicebank_baseline_offi
 # Recommended LibriSpeech training with soft VAD gating
 python -m src.train.train_mask_model --experiment-preset librispeech_soft_vad_recommended --max-batches 30
 
+# Complex MaskNet training on LibriSpeech with soft VAD labels
+python -m src.data_prep.generate_vad_labels --split all --label-set adaptive_soft_v1 --label-mode soft
+python -m src.train.train_mask_model --experiment-preset librispeech_complex_masknet_recommended --max-batches 30
+
 # Fast LibriSpeech benchmark preset
 python -m src.train.train_mask_model --experiment-preset librispeech_fast_benchmark --max-batches 30
 
@@ -84,6 +88,8 @@ python -m src.tools.project_cli compare-vad -- --split test --max-files 20
 **MaskNet**: U-Net (4 levels) + Bidirectional LSTM + Channel Attention
 - Variants: Tiny (200K) to XLarge (10M params)
 - Recommended now: `balanced_res` with residual encoder/decoder blocks
+
+**Complex MaskNet**: residual MaskNet variant that uses real/imaginary STFT input channels and predicts a two-channel complex ratio mask (CRM). The enhanced waveform is reconstructed from the estimated complex spectrogram instead of reusing only the noisy phase.
 
 **Classic methods**: Spectral Subtraction, Wiener Filter, VAD (88.3% accuracy)
 
@@ -146,6 +152,10 @@ python -m src.train.train_mask_model --dataset librispeech --use-vad-labels --va
 
 # Recommended LibriSpeech experiment with soft adaptive VAD gating
 python -m src.train.train_mask_model --experiment-preset librispeech_soft_vad_recommended --max-batches 30
+
+# Complex MaskNet experiment with real/imaginary complex ratio masks
+python -m src.data_prep.generate_vad_labels --split all --label-set adaptive_soft_v1 --label-mode soft
+python -m src.train.train_mask_model --experiment-preset librispeech_complex_masknet_recommended --max-batches 30
 
 # Fast LibriSpeech benchmark preset
 python -m src.train.train_mask_model --experiment-preset librispeech_fast_benchmark --max-batches 30

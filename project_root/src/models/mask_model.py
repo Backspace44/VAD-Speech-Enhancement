@@ -219,13 +219,24 @@ class MaskNet(nn.Module):
         use_attention: bool = True,
         use_residual: bool = False,
         use_depthwise: bool = False,
-        input_freq_bins: int = 257  # Number of frequency bins in input spectrogram
+        input_freq_bins: int = 257,  # Number of frequency bins in input spectrogram
+        output_channels: int = 1,
+        output_activation: str = "sigmoid",
+        output_scale: float = 1.0,
+        mask_type: str = "magnitude",
+        complex_mask_clip: float = 5.0,
     ):
         super().__init__()
+        self.in_channels = in_channels
+        self.output_channels = output_channels
         self.use_lstm = use_lstm
         self.use_attention = use_attention
         self.use_residual = use_residual
         self.use_depthwise = use_depthwise
+        self.output_activation = output_activation
+        self.output_scale = output_scale
+        self.mask_type = mask_type
+        self.complex_mask_clip = complex_mask_clip
 
         block_cls = DepthwiseSeparableConvBlock if use_depthwise else ConvBlock
         
@@ -272,9 +283,17 @@ class MaskNet(nn.Module):
             nn.Conv2d(base_channels, base_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(base_channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(base_channels, 1, kernel_size=1),
-            nn.Sigmoid()
+            nn.Conv2d(base_channels, output_channels, kernel_size=1),
         )
+
+    def _apply_output_activation(self, x: torch.Tensor) -> torch.Tensor:
+        if self.output_activation == "sigmoid":
+            return torch.sigmoid(x)
+        if self.output_activation == "tanh":
+            return torch.tanh(x) * self.output_scale
+        if self.output_activation in {"identity", "linear", None}:
+            return x
+        raise ValueError(f"Unknown output activation: {self.output_activation}")
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -313,8 +332,7 @@ class MaskNet(nn.Module):
         
 
         mask = self.out_conv(x)
-        
-        return mask
+        return self._apply_output_activation(mask)
 
 
 
