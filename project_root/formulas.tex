@@ -1,0 +1,485 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{bm}
+
+\geometry{margin=2.5cm}
+
+\title{Mathematical Formulas - Speech Enhancement Project}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Signal Processing Fundamentals}
+
+\subsection{Short-Time Fourier Transform (STFT)}
+
+The STFT transforms a time-domain signal into the time-frequency domain:
+
+\begin{equation}
+X(f, t) = \int_{-\infty}^{\infty} x(\tau) \cdot w(\tau - t) \cdot e^{-j2\pi f\tau} d\tau
+\end{equation}
+
+Discrete STFT for frame $m$:
+\begin{equation}
+X[k, m] = \sum_{n=0}^{N-1} x[n + mH] \cdot w[n] \cdot e^{-j2\pi kn/N}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $x[n]$ is the input signal
+    \item $w[n]$ is the window function (Hanning window)
+    \item $N$ is the FFT size (n\_fft = 512)
+    \item $H$ is the hop length (hop\_length = 160)
+    \item $k$ is the frequency bin index
+    \item $m$ is the frame index
+\end{itemize}
+
+\subsection{Inverse STFT (ISTFT)}
+
+Reconstruction from STFT:
+\begin{equation}
+x[n] = \frac{\sum_{m} w[n - mH] \cdot \text{IFFT}\{X[k, m]\}}{\sum_{m} w^2[n - mH]}
+\end{equation}
+
+\subsection{Magnitude and Phase}
+
+From complex STFT:
+\begin{align}
+\text{Magnitude:} \quad |X[k, m]| &= \sqrt{\text{Re}(X[k,m])^2 + \text{Im}(X[k,m])^2} \\
+\text{Phase:} \quad \angle X[k, m] &= \arctan\left(\frac{\text{Im}(X[k,m])}{\text{Re}(X[k,m])}\right)
+\end{align}
+
+Reconstruction:
+\begin{equation}
+X[k, m] = |X[k, m]| \cdot e^{j\angle X[k, m]}
+\end{equation}
+
+\section{Speech Enhancement Methods}
+
+\subsection{Ideal Ratio Mask (IRM)}
+
+Target mask for neural network training:
+\begin{equation}
+\text{IRM}[k, m] = \frac{|S_{\text{clean}}[k, m]|}{|S_{\text{clean}}[k, m]| + |N[k, m]| + \epsilon}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $S_{\text{clean}}$ is the clean speech STFT
+    \item $N$ is the noise STFT (approximated as $S_{\text{noisy}} - S_{\text{clean}}$)
+    \item $\epsilon = 10^{-12}$ prevents division by zero
+\end{itemize}
+
+Enhanced speech:
+\begin{equation}
+\hat{S}_{\text{clean}}[k, m] = \text{IRM}[k, m] \cdot S_{\text{noisy}}[k, m]
+\end{equation}
+
+\subsection{Spectral Subtraction}
+
+Basic spectral subtraction:
+\begin{equation}
+|\hat{S}[k, m]| = \max\left(|Y[k, m]| - \alpha \cdot |\hat{N}[k]|, \beta \cdot |\hat{N}[k]|\right)
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $Y[k, m]$ is the noisy speech magnitude
+    \item $\hat{N}[k]$ is the estimated noise magnitude (averaged over silence frames)
+    \item $\alpha$ is the over-subtraction factor (default: 1.0)
+    \item $\beta$ is the spectral floor factor (default: 0.02)
+\end{itemize}
+
+Adaptive noise tracking:
+\begin{equation}
+\hat{N}[k, t] = \lambda \cdot \hat{N}[k, t-1] + (1 - \lambda) \cdot |Y[k, t]|
+\end{equation}
+
+where $\lambda = 0.95$ is the smoothing factor (applied only during silence frames).
+
+\subsection{Wiener Filter}
+
+Wiener gain function:
+\begin{equation}
+G[k, m] = \frac{\text{SNR}_{\text{post}}[k, m]}{\text{SNR}_{\text{post}}[k, m] + 1}
+\end{equation}
+
+A posteriori SNR:
+\begin{equation}
+\text{SNR}_{\text{post}}[k, m] = \frac{|Y[k, m]|^2}{\hat{\sigma}_N^2[k, m] + \epsilon}
+\end{equation}
+
+Enhanced magnitude:
+\begin{equation}
+|\hat{S}[k, m]| = G[k, m] \cdot |Y[k, m]|
+\end{equation}
+
+Noise PSD estimation (during silence):
+\begin{equation}
+\hat{\sigma}_N^2[k] = \frac{1}{M} \sum_{m \in \text{silence}} |Y[k, m]|^2
+\end{equation}
+
+Adaptive noise PSD tracking:
+\begin{equation}
+\hat{\sigma}_N^2[k, t] = \lambda \cdot \hat{\sigma}_N^2[k, t-1] + (1 - \lambda) \cdot |Y[k, t]|^2
+\end{equation}
+
+\section{Voice Activity Detection (VAD)}
+
+\subsection{Energy-based Detection}
+
+Frame energy:
+\begin{equation}
+E[m] = \frac{1}{L} \sum_{n=0}^{L-1} x^2[n + mH]
+\end{equation}
+
+Normalized energy:
+\begin{equation}
+E_{\text{norm}}[m] = \frac{E[m]}{\max(E) + \epsilon}
+\end{equation}
+
+Speech detection:
+\begin{equation}
+\text{VAD}_E[m] = \begin{cases}
+1 & \text{if } E_{\text{norm}}[m] > \theta_E \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+where $\theta_E = 0.1$ is the energy threshold ratio.
+
+\subsection{Zero-Crossing Rate (ZCR)}
+
+ZCR for frame $m$:
+\begin{equation}
+\text{ZCR}[m] = \frac{1}{L-1} \sum_{n=0}^{L-2} \mathbb{1}\{\text{sign}(x[n + mH]) \neq \text{sign}(x[n + mH + 1])\}
+\end{equation}
+
+Speech typically has lower ZCR than noise:
+\begin{equation}
+\text{VAD}_{\text{ZCR}}[m] = \begin{cases}
+1 & \text{if } \text{ZCR}[m] < \theta_{\text{ZCR}} \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+where $\theta_{\text{ZCR}} = 0.2$ is the maximum ZCR for speech.
+
+\subsection{Combined VAD}
+
+Final VAD decision:
+\begin{equation}
+\text{VAD}[m] = \text{VAD}_E[m] \land \text{VAD}_{\text{ZCR}}[m]
+\end{equation}
+
+Post-processing to remove short segments:
+\begin{itemize}
+    \item Remove speech islands shorter than 3 frames
+    \item Remove silence islands shorter than 3 frames
+\end{itemize}
+
+\section{Evaluation Metrics}
+
+\subsection{Signal-to-Noise Ratio (SNR)}
+
+Global SNR in dB:
+\begin{equation}
+\text{SNR} = 10 \log_{10} \left(\frac{P_{\text{signal}}}{P_{\text{noise}}}\right)
+\end{equation}
+
+where:
+\begin{align}
+P_{\text{signal}} &= \frac{1}{N} \sum_{n=1}^{N} s^2[n] \\
+P_{\text{noise}} &= \frac{1}{N} \sum_{n=1}^{N} (s[n] - \hat{s}[n])^2
+\end{align}
+
+\subsection{Segmental SNR}
+
+Frame-based SNR with clipping:
+\begin{equation}
+\text{SegSNR} = \frac{1}{M} \sum_{m=1}^{M} \text{clip}\left(10 \log_{10} \left(\frac{P_{\text{signal}}^{(m)}}{P_{\text{noise}}^{(m)}}\right), -10, 35\right)
+\end{equation}
+
+\subsection{Scale-Invariant SDR (SI-SDR)}
+
+Scale-invariant projection:
+\begin{equation}
+\alpha = \frac{\langle \hat{s}, s \rangle}{\langle s, s \rangle}
+\end{equation}
+
+Target signal:
+\begin{equation}
+s_{\text{target}} = \alpha \cdot s
+\end{equation}
+
+Error signal:
+\begin{equation}
+e_{\text{noise}} = \hat{s} - s_{\text{target}}
+\end{equation}
+
+SI-SDR in dB:
+\begin{equation}
+\text{SI-SDR} = 10 \log_{10} \left(\frac{\|s_{\text{target}}\|^2}{\|e_{\text{noise}}\|^2 + \epsilon}\right)
+\end{equation}
+
+\subsection{Log-Spectral Distance (LSD)}
+
+Per-frame LSD:
+\begin{equation}
+\text{LSD}[m] = \sqrt{\frac{1}{K} \sum_{k=1}^{K} \left(10\log_{10}P_{\text{clean}}[k,m] - 10\log_{10}P_{\text{proc}}[k,m]\right)^2}
+\end{equation}
+
+Average LSD:
+\begin{equation}
+\text{LSD} = \frac{1}{M} \sum_{m=1}^{M} \text{LSD}[m]
+\end{equation}
+
+\subsection{VAD Metrics}
+
+For binary classification (speech vs silence):
+
+True Positive (TP), True Negative (TN), False Positive (FP), False Negative (FN)
+
+\begin{align}
+\text{Accuracy} &= \frac{\text{TP} + \text{TN}}{\text{TP} + \text{TN} + \text{FP} + \text{FN}} \\
+\text{Precision} &= \frac{\text{TP}}{\text{TP} + \text{FP}} \\
+\text{Recall} &= \frac{\text{TP}}{\text{TP} + \text{FN}} \\
+\text{F1-Score} &= \frac{2 \cdot \text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}
+\end{align}
+
+Miss Rate and False Alarm Rate:
+\begin{align}
+\text{Miss Rate} &= \frac{\text{FN}}{\text{TP} + \text{FN}} = 1 - \text{Recall} \\
+\text{False Alarm Rate} &= \frac{\text{FP}}{\text{FP} + \text{TN}}
+\end{align}
+
+\section{Audio Normalization}
+
+\subsection{Peak Normalization}
+
+\begin{equation}
+x_{\text{norm}}[n] = \frac{x[n]}{\max_n |x[n]|}
+\end{equation}
+
+\subsection{RMS Normalization}
+
+Root Mean Square:
+\begin{equation}
+\text{RMS} = \sqrt{\frac{1}{N} \sum_{n=1}^{N} x^2[n]}
+\end{equation}
+
+Current level in dB:
+\begin{equation}
+L_{\text{current}} = 20 \log_{10}(\text{RMS})
+\end{equation}
+
+Gain to reach target level:
+\begin{equation}
+g_{\text{dB}} = L_{\text{target}} - L_{\text{current}}
+\end{equation}
+
+Linear gain:
+\begin{equation}
+g = 10^{g_{\text{dB}}/20}
+\end{equation}
+
+Normalized signal:
+\begin{equation}
+x_{\text{norm}}[n] = g \cdot x[n]
+\end{equation}
+
+\subsection{LUFS Normalization}
+
+ITU-R BS.1770 loudness measurement:
+
+Mean square with K-weighting:
+\begin{equation}
+\overline{x^2} = \frac{1}{N} \sum_{n=1}^{N} (K_{\text{weight}} \star x[n])^2
+\end{equation}
+
+LUFS (Loudness Units relative to Full Scale):
+\begin{equation}
+\text{LUFS} = -0.691 + 10 \log_{10}(\overline{x^2})
+\end{equation}
+
+\subsection{Dynamic Range}
+
+Peak-to-RMS ratio in dB:
+\begin{equation}
+\text{DR}_{\text{dB}} = 20 \log_{10}\left(\frac{\max_n |x[n]|}{\text{RMS}}\right)
+\end{equation}
+
+\section{Data Augmentation}
+
+\subsection{SNR-based Mixing}
+
+Target SNR in linear scale:
+\begin{equation}
+\rho = 10^{-\text{SNR}_{\text{dB}}/10}
+\end{equation}
+
+Noise scaling factor:
+\begin{equation}
+\alpha = \sqrt{\rho \cdot \frac{P_{\text{clean}}}{P_{\text{noise}}}}
+\end{equation}
+
+Mixed signal:
+\begin{equation}
+y[n] = s[n] + \alpha \cdot n[n]
+\end{equation}
+
+\subsection{Gain Adjustment}
+
+Gain in dB to linear:
+\begin{equation}
+g = 10^{g_{\text{dB}}/20}
+\end{equation}
+
+Applied signal:
+\begin{equation}
+x_{\text{aug}}[n] = g \cdot x[n]
+\end{equation}
+
+\subsection{Pitch Shift}
+
+Semitones to rate conversion:
+\begin{equation}
+r = 2^{s/12}
+\end{equation}
+
+where $s$ is the number of semitones (positive for upshift, negative for downshift).
+
+\subsection{Compression}
+
+Compression with attack/release envelope:
+\begin{equation}
+x_{\text{comp}}[n] = \text{sign}(x[n]) \cdot |x[n]|^{1 - 1/R}
+\end{equation}
+
+where $R$ is the compression ratio (e.g., $R=4$ means 4:1 compression).
+
+Threshold-based compression:
+\begin{equation}
+x_{\text{comp}}[n] = \begin{cases}
+x[n] & \text{if } |x[n]| < \theta \\
+\text{sign}(x[n]) \cdot \left(\theta + \frac{|x[n]| - \theta}{R}\right) & \text{otherwise}
+\end{cases}
+\end{equation}
+
+\section{Neural Network Architecture}
+
+\subsection{U-Net Encoder-Decoder}
+
+Encoder (downsampling):
+\begin{equation}
+h_i = f_{\text{down}}(h_{i-1}), \quad i = 1, 2, 3, 4
+\end{equation}
+
+Bottleneck with LSTM:
+\begin{equation}
+h_{\text{lstm}} = \text{BiLSTM}(h_4)
+\end{equation}
+
+Decoder (upsampling) with skip connections:
+\begin{equation}
+h_i = f_{\text{up}}([h_{i+1}, h_{\text{skip}_i}]), \quad i = 4, 3, 2, 1
+\end{equation}
+
+where $[\cdot, \cdot]$ denotes concatenation.
+
+\subsection{Channel Attention}
+
+Attention weights:
+\begin{equation}
+\alpha_c = \frac{\exp(W_c \cdot \text{GlobalAvgPool}(h_c))}{\sum_{c'} \exp(W_{c'} \cdot \text{GlobalAvgPool}(h_{c'}))}
+\end{equation}
+
+Attended features:
+\begin{equation}
+h'_c = \alpha_c \cdot h_c
+\end{equation}
+
+\subsection{Loss Function}
+
+Mean Squared Error (MSE) between predicted and ideal masks:
+\begin{equation}
+\mathcal{L}_{\text{MSE}} = \frac{1}{KM} \sum_{k=1}^{K} \sum_{m=1}^{M} (\text{IRM}_{\text{pred}}[k,m] - \text{IRM}_{\text{true}}[k,m])^2
+\end{equation}
+
+Mean Absolute Error (MAE):
+\begin{equation}
+\mathcal{L}_{\text{MAE}} = \frac{1}{KM} \sum_{k=1}^{K} \sum_{m=1}^{M} |\text{IRM}_{\text{pred}}[k,m] - \text{IRM}_{\text{true}}[k,m]|
+\end{equation}
+
+Combined loss:
+\begin{equation}
+\mathcal{L} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{MAE}}
+\end{equation}
+
+\section{Notation Summary}
+
+\begin{tabular}{ll}
+\hline
+Symbol & Description \\
+\hline
+$x[n]$ & Time-domain signal \\
+$X[k,m]$ & STFT (frequency $k$, frame $m$) \\
+$|X|$ & Magnitude spectrum \\
+$\angle X$ & Phase spectrum \\
+$s[n]$ & Clean speech signal \\
+$n[n]$ & Noise signal \\
+$y[n]$ & Noisy signal ($s + n$) \\
+$\hat{s}[n]$ & Enhanced/estimated signal \\
+$N$ & FFT size (512) \\
+$H$ & Hop length (160 samples) \\
+$L$ & Window/frame length (400 samples) \\
+$\epsilon$ & Small constant ($10^{-12}$) \\
+$\lambda$ & Smoothing factor (0.95) \\
+$\alpha$ & Over-subtraction factor / weighting \\
+$\beta$ & Spectral floor factor (0.02) \\
+\hline
+\end{tabular}
+
+\section{Implementation Notes}
+
+\subsection{STFT Parameters}
+\begin{itemize}
+    \item Sample rate: 16000 Hz
+    \item FFT size (n\_fft): 512
+    \item Hop length: 160 samples (10 ms)
+    \item Window length: 400 samples (25 ms)
+    \item Window type: Hanning
+    \item Frequency bins: 257 (n\_fft/2 + 1)
+\end{itemize}
+
+\subsection{VAD Parameters}
+\begin{itemize}
+    \item Frame length: 400 samples (25 ms)
+    \item Hop length: 160 samples (10 ms)
+    \item Energy threshold ratio: 0.1
+    \item Max ZCR for speech: 0.2
+    \item Min speech frames: 3
+    \item Min silence frames: 3
+\end{itemize}
+
+\subsection{Training Configuration}
+\begin{itemize}
+    \item Batch size: 8
+    \item Optimizer: Adam ($\beta_1=0.9$, $\beta_2=0.999$)
+    \item Learning rate: $10^{-3}$
+    \item Weight decay: $10^{-5}$
+    \item Loss: MSE (Mean Squared Error)
+    \item Mixed precision: Enabled (FP16)
+\end{itemize}
+
+\end{document}

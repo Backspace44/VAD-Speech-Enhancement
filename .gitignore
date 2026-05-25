@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large/generated project artifacts
+*.zip
+*.pth
+*.pt
+data/
+results/
+checkpoints/
+project_root/data/
+project_root/results/
+project_root/checkpoints/
