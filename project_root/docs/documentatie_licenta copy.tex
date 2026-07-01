@@ -1,0 +1,764 @@
+
+\documentclass[12pt,a4paper]{report}
+
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{romanian}
+\setotherlanguages{english}
+\SetLanguageKeys{romanian}{indentfirst=true}
+
+\usepackage{csquotes}
+\usepackage{setspace}
+\onehalfspacing
+\setlength{\emergencystretch}{3em}
+\setlength{\parskip}{0.15em}
+\raggedbottom
+
+\usepackage[margin=2.35cm]{geometry}
+\usepackage{amsmath}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage[
+    colorlinks,
+    linkcolor={black},
+    menucolor={black},
+    citecolor={black},
+    urlcolor={blue}
+]{hyperref}
+
+\titleformat{\chapter}[hang]
+  {\normalfont\Large\bfseries}{\thechapter.}{0.75em}{}
+\titlespacing*{\chapter}{0pt}{-0.4em}{0.8em}
+\titlespacing*{\section}{0pt}{0.6em}{0.25em}
+\titlespacing*{\subsection}{0pt}{0.45em}{0.2em}
+\setlist{nosep,leftmargin=*}
+
+\definecolor{codebackground}{rgb}{0.96,0.96,0.96}
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{codebackground},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    columns=fullflexible,
+    keepspaces=true,
+    showstringspaces=false
+}
+\lstset{style=codestyle}
+
+\newenvironment{abstractpage}
+  {\clearpage\vspace*{\fill}\thispagestyle{empty}}
+  {\vfill\clearpage}
+
+\renewenvironment{abstract}[1]
+  {\smallskip\selectlanguage{#1}%
+   \begin{center}\bfseries\abstractname\end{center}\small}
+  {\par\smallskip}
+
+\title{Voice Activity Detection \& Speech Enhancement}
+\author{Dumitrescu David-Vasile}
+\newcommand{\coordinator}{Conferentiar Doctor Cristian Rusu}
+\newcommand{\specialization}{Informatica}
+\newcommand{\faculty}{Facultatea de Matematica si Informatica}
+\newcommand{\university}{Universitatea din Bucuresti}
+
+\makeatletter
+
+\begin{document}
+
+\begin{titlepage}
+\newgeometry{left=2cm,right=2cm,bottom=1.2cm,top=2cm}
+\begin{center}
+\begin{tabular}{m{0.18\textwidth} m{0.56\textwidth} m{0.18\textwidth}}
+\centering\includegraphics[height=2.8cm]{assets/logo-ub.png} &
+\centering{\Large \textbf{\MakeUppercase{\university}}} &
+\centering\includegraphics[height=2.8cm]{assets/logo-fmi.png}
+\end{tabular}
+
+\vspace{0.25cm}
+{\Large \textbf{\MakeUppercase{\faculty}}}
+
+\vspace{0.45cm}
+{\large \textbf{SPECIALIZAREA \MakeUppercase{\specialization}}}
+\end{center}
+
+\vspace{1.8cm}
+
+\begin{center}
+{\Large \textbf{Lucrare de licenta}}
+\end{center}
+
+\vspace{0.9cm}
+
+\begin{center}
+{\huge \bfseries
+\begin{tabular}{c}
+VOICE ACTIVITY DETECTION \&\\[0.22cm]
+SPEECH ENHANCEMENT
+\end{tabular}}
+\end{center}
+
+\vspace{2.4cm}
+
+\begin{center}
+\large \textbf{Absolvent}
+
+\vspace{0.2cm}
+\large \textbf{\@author}
+\end{center}
+
+\vspace{0.7cm}
+
+\begin{center}
+\large \textbf{Coordonator stiintific}
+
+\vspace{0.2cm}
+\large \textbf{\coordinator}
+\end{center}
+
+\vfill
+
+\begin{center}
+\Large \textbf{Bucuresti, iunie 2026}
+\end{center}
+\end{titlepage}
+\restoregeometry
+
+\begin{abstractpage}
+\begin{abstract}{romanian}
+Lucrarea prezinta proiectarea si implementarea unui sistem de reducere a
+zgomotului din semnale vocale. Solutia combina procesarea digitala a
+semnalului cu retele neuronale MaskNet, folosind reprezentarea STFT, estimarea
+unei masti spectrale si reconstructia prin iSTFT. Proiectul include metode
+clasice de referinta, antrenare pe LibriSpeech-DEMAND cu mixare on-the-fly,
+etichete VAD hard si soft, varianta Complex MaskNet, evaluare pe
+VoiceBank-DEMAND si o interfata realtime redesenata pentru demonstratii
+interactive.
+\end{abstract}
+
+\begin{abstract}{english}
+This thesis presents a speech enhancement system that combines digital signal
+processing and MaskNet neural networks. The system uses STFT representations,
+spectral-mask estimation and inverse STFT reconstruction. It includes classical
+baselines, LibriSpeech-DEMAND training with on-the-fly mixing, hard and soft VAD
+labels, a Complex MaskNet variant, VoiceBank-DEMAND evaluation and a redesigned
+realtime interface for interactive demonstrations.
+\end{abstract}
+\end{abstractpage}
+
+\tableofcontents
+\clearpage
+
+\chapter{Introducere}
+
+\section{Context}
+
+Semnalele vocale sunt frecvent captate in prezenta zgomotului produs de trafic,
+birouri, ventilatoare, tastaturi, conversatii de fundal sau reverberatia
+incaperii. Aceste perturbatii reduc inteligibilitatea si calitatea perceptuala
+a vorbirii si afecteaza aplicatii precum conferinte online, asistenti vocali,
+recunoastere automata a vorbirii si instrumente de analiza audio.
+
+Problema reducerii zgomotului poate fi formulata prin modelul aditiv:
+\[
+x[n] = s[n] + v[n],
+\]
+unde \(s[n]\) este semnalul vocal curat, \(v[n]\) zgomotul, iar \(x[n]\)
+semnalul observat. Scopul este estimarea unui semnal \(\hat{s}[n]\) apropiat
+de vorbirea curata, dar fara artefacte perceptibile si fara eliminarea
+componentelor utile ale vorbirii.
+
+Proiectul abordeaza problema in domeniul timp-frecventa. Semnalul zgomotos este
+transformat prin Short-Time Fourier Transform (STFT), iar modelul invata o
+masca spectrala care atenueaza zonele dominate de zgomot. Aceasta formulare
+este potrivita pentru retele convolutionale, produce iesiri interpretabile si
+permite compararea directa cu metode clasice de procesare digitala a
+semnalului.
+
+\section{Obiective si contributii}
+
+Obiectivul principal este realizarea unui pipeline complet de speech
+enhancement, de la pregatirea datelor pana la evaluare si demonstratie
+realtime. Sistemul trebuie sa antreneze modele MaskNet, sa ruleze metode DSP de
+referinta, sa calculeze metrici obiective si sa ofere o interfata prin care
+diferenta dintre intrare si iesire sa poata fi observata in timp real.
+
+Contributiile proiectului sunt:
+\begin{itemize}
+    \item pipeline modular pentru date, antrenare, inferenta, evaluare si demo;
+    \item arhitectura MaskNet de tip U-Net cu blocuri reziduale, LSTM
+    bidirectional si attention;
+    \item suport pentru masca de magnitudine si pentru Complex MaskNet, care
+    estimeaza o masca real-imaginar;
+    \item antrenare pe LibriSpeech-DEMAND cu mixare on-the-fly la SNR variabil
+    si etichete VAD hard/soft;
+    \item comparatie cu Noisy, Spectral Subtraction si Wiener Filter;
+    \item evaluare pe VoiceBank-DEMAND prin PESQ, STOI, SNR, segmental SNR si
+    Log Spectral Distance;
+    \item interfata realtime redesenata, cu forme de unda, spectrograme,
+    selectii de metoda, surse audio, scenarii, VAD, snapshot si recording.
+\end{itemize}
+
+O decizie importanta este separarea dintre datele de antrenare si cele de
+benchmark. Modelele sunt antrenate pe LibriSpeech combinat cu zgomote DEMAND,
+iar VoiceBank-DEMAND este folosit ca set fix de evaluare si comparare a
+checkpoint-urilor.
+
+\chapter{Fundamente teoretice}
+
+\section{STFT si reconstructie}
+
+Vorbirea este ne-stationara: continutul sau frecvential se schimba rapid in
+timp. De aceea, sistemul foloseste STFT:
+\[
+X(m,k)=\sum_{n=0}^{L-1}x[n+mH]w[n]e^{-j2\pi kn/N},
+\]
+unde \(m\) este cadrul temporal, \(k\) indicele de frecventa, \(L\) lungimea
+ferestrei, \(H\) hop-ul si \(N\) dimensiunea FFT. In implementare, semnalele
+sunt aduse la 16 kHz, fereastra este de 25 ms, hop-ul de 10 ms, iar
+\(N_{FFT}=512\), rezultand 257 benzi de frecventa.
+
+Dupa imbunatatire, semnalul audio este reconstruit prin iSTFT. Pentru modelul
+de magnitudine se foloseste magnitudinea estimata si faza semnalului zgomotos,
+iar pentru varianta complexa se reconstruieste din spectrograma complexa
+estimata.
+
+\section{Masti spectrale}
+
+Modelul principal nu genereaza direct forma de unda, ci o masca aplicata peste
+spectrograma zgomotoasa:
+\[
+|\hat{X}_{clean}| = |X_{noisy}| \cdot \hat{M}.
+\]
+Tinta folosita pentru modelul de magnitudine este Ideal Ratio Mask:
+\[
+M_{IRM}=\frac{|X_{clean}|}{|X_{clean}|+|X_{noise}|+\varepsilon}.
+\]
+Valorile apropiate de 1 pastreaza energia asociata vorbirii, iar valorile
+apropiate de 0 atenueaza regiunile dominate de zgomot. Formularea prin masca
+este stabila la antrenare si usor de interpretat vizual pe spectrograme.
+
+\section{Complex MaskNet}
+
+Modelul de magnitudine este simplu si stabil, dar pastreaza faza zgomotoasa,
+ceea ce poate limita calitatea finala. Pentru aceasta limita, proiectul include
+varianta \texttt{complex\_balanced\_res}. Aceasta primeste doua canale de
+intrare, partea reala si partea imaginara a STFT-ului zgomotos, si prezice doua
+canale pentru o Complex Ratio Mask. Iesirea este limitata prin activare
+\texttt{tanh} scalata si clipping, deoarece valorile mastii complexe pot fi mai
+greu de controlat decat cele ale mastii IRM.
+
+Complex MaskNet este tratat ca directie avansata a proiectului: pastreaza
+aceeasi baza U-Net reziduala, dar muta reconstructia dintr-o problema de
+magnitudine intr-una complexa, permitand corectii partiale ale fazei.
+
+\section{Metode clasice de referinta}
+
+Pentru ca performanta modelului neuronal sa poata fi interpretata corect,
+proiectul include doua metode clasice: Spectral Subtraction si Wiener Filter.
+Spectral Subtraction estimeaza profilul zgomotului si il scade din magnitudinea
+semnalului zgomotos. Metoda este simpla si rapida, dar poate introduce asa-numite
+artefacte muzicale atunci cand zgomotul nu este stationar sau estimarea
+zgomotului este gresita. Wiener Filter foloseste o estimare a raportului dintre
+semnal si zgomot pentru a calcula un filtru adaptiv in domeniul frecventei. In
+general este mai neted decat scaderea spectrala, dar ramane dependent de
+ipoteze statistice despre zgomot.
+
+Aceste metode nu au rolul de a concura direct cu un model antrenat pe date
+diverse, ci de a oferi praguri de referinta. Daca MaskNet depaseste metodele
+clasice pe PESQ, STOI sau LSD, atunci se poate argumenta ca modelul invata
+relatii spectrale care nu pot fi surprinse usor prin reguli fixe. Daca o metoda
+clasica obtine rezultate apropiate, atunci avantajul modelului neuronal trebuie
+justificat prin robustete, adaptare la zgomote variabile sau comportament mai
+bun in demo-ul realtime.
+
+\section{VAD si metrici}
+
+Voice Activity Detection identifica segmentele care contin vorbire. Proiectul
+foloseste un detector adaptiv bazat pe energie, Zero Crossing Rate si informatie
+spectrala. Etichetele pot fi hard, cu valori 0/1, sau soft, cu scoruri intre 0
+si 1. In antrenare, aceste etichete ajusteaza masca tinta: zonele de liniste
+sunt atenuate, iar scorurile soft pastreaza un prag minim pentru a evita
+stergerea vorbirii slabe.
+
+Evaluarea foloseste mai multe metrici, deoarece o singura valoare nu descrie
+complet calitatea audio. PESQ aproximeaza calitatea perceptuala, STOI
+inteligibilitatea, SNR raportul global semnal-zgomot, segmental SNR variatiile
+pe cadre, iar Log Spectral Distance diferentele spectrale. Rezultatele sunt
+interpretate comparativ fata de baseline-ul Noisy si fata de metodele DSP.
+
+\chapter{Proiectare si implementare}
+
+\section{Arhitectura proiectului}
+
+Proiectul este organizat in module cu responsabilitati clare. Modulul
+\texttt{data\_prep} gestioneaza dataset-ul, validarea, augmentarea, metadata si
+etichetele VAD. Modulul \texttt{dsp} contine STFT, iSTFT, metrici, VAD,
+Spectral Subtraction si Wiener Filter. Modulul \texttt{models} defineste
+MaskNet si functiile de inferenta. Modulul \texttt{train} contine configurarea
+antrenarii, optimizatorii, schedulerele, bucla train/validation si
+checkpointing-ul. Modulul \texttt{eval} produce rapoarte, comparatii si
+grafice, iar \texttt{tools} include CLI-ul unificat, healthcheck-ul, inventarul
+de proiect si demo-ul realtime.
+
+Aceasta separare permite reutilizarea componentelor. Acelasi pipeline de
+enhancement poate fi folosit in evaluare, in demo offline si in modul realtime,
+iar metodele clasice pot fi comparate cu MaskNet fara duplicarea codului.
+
+Fluxul general este gandit astfel incat fiecare etapa sa poata fi rulata si
+verificata separat. Datele sunt validate inainte de antrenare, etichetele VAD
+sunt generate in directoare versionate, iar experimentele isi salveaza propria
+configuratie. Evaluarea nu modifica checkpoint-urile si foloseste acelasi cod
+de inferenta ca demo-ul, ceea ce reduce diferenta dintre rezultatele raportate
+si comportamentul observat de utilizator.
+
+O parte importanta a proiectarii este separarea artefactelor generate de codul
+sursa. Checkpoint-urile, graficele, rapoartele, logurile, exemplele audio si
+snapshot-urile UI sunt scrise in directoare dedicate. Aceasta organizare ajuta
+la curatarea proiectului, la reluarea experimentelor si la alegerea fisierelor
+care trebuie incluse in prezentare sau in arhiva finala.
+
+\section{Date si antrenare}
+
+Datele de antrenare folosesc vorbire LibriSpeech si zgomote DEMAND. Pentru
+fiecare exemplu, un fisier clean este combinat on-the-fly cu zgomot la un SNR
+ales aleator, implicit in intervalul 0--20 dB:
+\[
+x[n] = s[n] + \alpha v[n].
+\]
+Factorul \(\alpha\) este calculat astfel incat raportul semnal-zgomot sa aiba
+valoarea dorita. In validare, mixarea poate fi determinista pentru ca
+rezultatele sa fie comparabile intre rulari.
+
+\texttt{SpeechEnhancementDataset} returneaza magnitudinea STFT a semnalului
+zgomotos, spectrograma complexa pe canale real/imaginar, magnitudinea clean,
+masca IRM, masca complexa, faza noisy si numele fisierului. Cum fisierele au
+durate diferite, functia de collation aplica padding pe axa temporala.
+
+Antrenarea este controlata de \texttt{train\_mask\_model.py}. Presetarea
+recomandata este \texttt{librispeech\_soft\_vad\_recommended}: model
+\texttt{balanced\_res}, optimizator AdamW, scheduler OneCycleLR, pierdere MSE
+si etichete VAD soft. Pentru testare rapida exista presetarea
+\texttt{librispeech\_fast\_benchmark}, iar pentru masca complexa presetarea
+\texttt{librispeech\_complex\_masknet\_recommended}. Fiecare rulare salveaza
+configuratia, checkpoint-ul cel mai bun, istoricul si sumarul experimentului.
+
+Pentru reproductibilitate, configuratia este centralizata in \texttt{config.py}.
+Acolo sunt definite rata de esantionare, parametrii STFT, variantele de model,
+optimizatorii, schedulerele, functiile de pierdere, directoriile de rezultate si
+presetarile de experiment. Aceasta decizie evita situatiile in care aceeasi
+rulare este pornita cu parametri diferiti din fisiere separate. In plus,
+checkpoint-ul salvat contine informatii despre epoca, pierdere, optimizator si
+argumentele CLI, astfel incat un experiment sa poata fi reluat sau comparat cu
+alte rulari.
+
+\section{Modelul MaskNet}
+
+Modelul principal, \texttt{balanced\_res}, este un U-Net rezidual cu patru
+niveluri de encoder si decoder. Encoder-ul extrage reprezentari spectrale pe
+mai multe scale, bottleneck-ul comprima informatia, iar decoder-ul reconstruieste
+masca la rezolutia initiala. Skip connections pastreaza detaliile locale,
+blocurile reziduale ajuta propagarea gradientilor, LSTM-ul bidirectional
+modeleaza contextul temporal, iar attention-ul ajusteaza importanta canalelor.
+
+Variantele disponibile acopera compromisuri diferite: \texttt{tiny} si
+\texttt{tiny\_fast} sunt utile pentru validari rapide, \texttt{balanced\_res}
+este configuratia principala, \texttt{complex\_balanced\_res} extinde modelul
+la masti complexe, iar variantele \texttt{large} si \texttt{xlarge} sunt mai
+costisitoare, dar pot fi investigate pentru calitate superioara.
+
+Intrarea modelului este tratata ca o imagine timp-frecventa, unde axa verticala
+reprezinta frecventa, iar axa orizontala timpul. Aceasta perspectiva permite
+folosirea convolutiilor 2D pentru a detecta structuri locale: armonici,
+formanti, zone de liniste si regiuni dominate de zgomot. LSTM-ul completeaza
+convolutiile prin modelarea dependentei dintre cadre consecutive, importanta
+mai ales pentru vorbire, unde sunetele se desfasoara pe secvente temporale
+continue. Attention-ul pe canale ajuta reteaua sa puna accent pe trasaturile
+cele mai relevante in decoder.
+
+\section{CLI, inferenta si artefacte}
+
+CLI-ul unificat simplifica rularea proiectului:
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli train -- --experiment-preset librispeech_soft_vad_recommended
+python -m src.tools.project_cli eval-all -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test
+python -m src.tools.project_cli realtime-demo -- --method masknet --visualize
+python -m src.tools.project_cli project-inventory
+\end{lstlisting}
+
+In inferenta, checkpoint-ul reconstruieste arhitectura, se calculeaza STFT
+pentru intrare, modelul prezice masca, iar semnalul este reconstruit prin iSTFT.
+Pipeline-ul comun poate rula Noisy, Spectral Subtraction, Wiener Filter si
+MaskNet. Artefactele sunt separate de cod: checkpoint-uri in \texttt{checkpoints},
+rapoarte si grafice in \texttt{results}, loguri in \texttt{logs}, iar
+recording-urile demo in \texttt{results/audio\_samples}. Comanda
+\texttt{project-inventory} clasifica artefactele ca \texttt{official},
+\texttt{benchmark}, \texttt{smoke}, \texttt{demo} sau \texttt{legacy}.
+
+\section{Artefacte finale si livrare}
+
+Pentru o lucrare de licenta, nu este suficient ca modelul sa ruleze; rezultatele
+trebuie sa fie usor de gasit, justificat si prezentat. Din acest motiv,
+proiectul pastreaza o conventie explicita pentru artefacte. Checkpoint-ul
+principal este cel antrenat pe LibriSpeech-DEMAND cu VAD soft, deoarece
+reprezinta configuratia recomandata pentru calitate. Checkpoint-ul rapid este
+pastrat pentru validari scurte si pentru situatii in care resursele locale nu
+permit rularea unei configuratii mai mari. Rapoartele finale contin comparatii
+pe VoiceBank-DEMAND si tabele agregate pentru metodele evaluate.
+
+Artefactele audio au un rol separat fata de tabelele numerice. Un fisier CSV
+poate arata ca STOI sau PESQ cresc, dar ascultarea exemplelor raw si enhanced
+ramane necesara pentru a observa artefacte, distorsiuni vocale sau efecte de
+supraprocesare. De aceea, demo-ul offline si cel realtime salveaza fisiere WAV,
+iar UI-ul poate salva snapshot-uri PNG. Aceste fisiere pot fi folosite in
+prezentare pentru a arata atat imbunatatirea semnalului, cat si modul in care
+sistemul reactioneaza la schimbarea SNR-ului, a scenariului sau a metodei de
+denoising.
+
+Inventarul de proiect are rolul de a separa experimentele oficiale de rularile
+de dezvoltare. In timpul implementarii au existat rulari de tip smoke test,
+checkpoint-uri intermediare, comparatii partiale si demo-uri locale. Fara o
+clasificare clara, aceste fisiere pot crea confuzie in etapa de livrare.
+Comanda de inventar identifica artefactele recomandate si permite alegerea unui
+set coerent pentru lucrare: checkpoint-ul principal, benchmark-ul final,
+comparatia fata de baseline si exemplele audio.
+
+\chapter{Interfata realtime si designul actual}
+
+\section{Rol si structura}
+
+Interfata realtime transforma sistemul intr-o demonstratie vizuala si auditiva.
+Ea este implementata cu Tkinter, \texttt{ttk} si Matplotlib si are rolul de a
+afisa simultan intrarea zgomotoasa si iesirea imbunatatita. Fereastra
+\texttt{Realtime Speech Enhancement Monitor} este impartita in doua zone: in
+stanga se afla monitorizarea, iar in dreapta controalele.
+
+Zona de monitorizare contine sumarul sesiunii, forma de unda raw, forma de unda
+enhanced, spectrograma raw si spectrograma enhanced. Spectrogramele sunt
+calculate local pe bufferul de afisare si sunt limitate intre \(-80\) dB si
+\(0\) dB pentru stabilitate vizuala. Intrarea este colorata in rosu, iesirea in
+verde, iar VAD-ul soft in albastru. Interfata afiseaza si statusul semnalului
+de microfon, timpul mediu si maxim de procesare, drop-urile, checkpoint-ul,
+sursa, scenariul, SNR-ul, dry/wet, gain-ul si recording-ul.
+
+Designul vizual a fost ales pentru a face comparatia usor de urmarit in timpul
+prezentarii. Intrarea si iesirea folosesc culori diferite, iar informatiile de
+status sunt grupate intr-un sumar scurt, nu imprastiate in consola. Taburile
+separa operatiile in functie de intentia utilizatorului: alegerea dispozitivelor,
+alegerea metodei de procesare, incarcarea fisierelor si controlul scenariilor.
+Aceasta organizare reduce riscul ca utilizatorul sa modifice accidental un
+parametru important in timpul demonstratiei.
+
+\section{Controale si scenarii}
+
+Controalele sunt grupate in patru taburi. \textbf{Audio} selecteaza sursa
+\texttt{microphone} sau \texttt{speech+noise} si dispozitivele de intrare/iesire.
+\textbf{Processing} selecteaza metoda \texttt{masknet},
+\texttt{spectral\_subtraction}, \texttt{wiener} sau \texttt{bypass}, modul VAD
+\texttt{off}, \texttt{adaptive\_hard} sau \texttt{adaptive\_soft}, precum si
+sliderele dry/wet si output gain. \textbf{Files} incarca fisiere de vorbire si
+zgomot pentru demo-ul sintetic. \textbf{Augment} controleaza scenariul, SNR-ul
+si distorsiuni precum gain, time stretch, pitch shift, reverb, EQ, compresie si
+clipping.
+
+Presetarile de scenariu faciliteaza prezentarea: \texttt{neutral} foloseste un
+mix moderat, \texttt{office} adauga EQ si compresie, \texttt{street} foloseste
+SNR mai mic, reverberatie si clipping, iar \texttt{hard} combina mai multe
+distorsiuni. Astfel, comportamentul modelului poate fi demonstrat fara
+repornirea aplicatiei.
+
+Modul \texttt{speech+noise} este util deoarece creeaza un mediu de test
+controlat. In loc sa depinda exclusiv de zgomotul real din incapere,
+utilizatorul poate incarca un fisier de vorbire si unul de zgomot, apoi poate
+schimba SNR-ul live. Astfel se pot observa rapid situatii usoare si dificile:
+la SNR mare, diferentele pot fi subtile, iar la SNR mic devin vizibile atat
+avantajele, cat si limitele modelului. Recording-ul salveaza intrarea si
+iesirea, ceea ce permite reascultarea dupa demonstratie si includerea unor
+exemple audio in livrarea finala.
+
+\section{Flux de utilizare in demonstratie}
+
+Un scenariu tipic de demonstratie incepe cu alegerea dispozitivelor audio si cu
+verificarea indicatorului de semnal. Daca microfonul este activ, interfata
+afiseaza imediat forma de unda si nivelul RMS al intrarii. Utilizatorul poate
+porni initial metoda \texttt{bypass}, pentru a arata semnalul brut, apoi poate
+comuta la Spectral Subtraction, Wiener Filter si MaskNet. Deoarece toate metodele
+folosesc aceeasi interfata de monitorizare, comparatia este directa: forma de
+unda, spectrograma si nivelul de iesire se schimba fara repornirea aplicatiei.
+
+Pentru o prezentare mai controlata, modul \texttt{speech+noise} este mai
+predictibil decat microfonul. Se incarca un fisier de vorbire si unul de zgomot,
+se porneste scenariul \texttt{neutral}, apoi se reduce treptat SNR-ul sau se
+activeaza scenariul \texttt{hard}. In acest mod se poate observa cum modelul se
+comporta atunci cand zgomotul devine dominant. Snapshot-ul surprinde starea
+vizuala a spectrogramelor, iar recording-ul produce doua fisiere WAV: intrarea
+si iesirea. Aceste artefacte sunt utile pentru discutia de dupa demo, deoarece
+permit revenirea asupra aceluiasi exemplu audio fara a depinde de conditiile
+din sala.
+
+Un avantaj practic al designului este faptul ca UI-ul arata si problemele de
+rulare, nu doar rezultatul ideal. Daca procesarea este prea lenta, cresc
+valorile de latenta sau numarul de blocuri lipsa la iesire. Daca microfonul nu
+capteaza semnal, indicatorul vizual avertizeaza utilizatorul. Astfel, interfata
+functioneaza si ca instrument de diagnostic pentru pipeline-ul realtime.
+
+\section{Flux realtime si concurenta}
+
+Motorul realtime foloseste un stream \texttt{sounddevice} full-duplex. Callback-ul
+audio trebuie sa fie rapid: citeste blocul de intrare, il pune in coada de
+procesare, extrage cel mai recent bloc procesat si il trimite la iesire. STFT,
+inferenta MaskNet si reconstructia sunt mutate intr-un thread separat.
+
+Comunicarea foloseste doua cozi: \texttt{input\_queue} si \texttt{output\_queue}.
+Coada de intrare primeste blocuri raw, iar thread-ul worker produce blocuri
+enhanced. Daca iesirea nu este disponibila, sistemul trimite temporar liniste;
+daca o coada se umple, blocurile vechi sunt eliminate pentru a evita cresterea
+latentei. Oprirea este controlata prin \texttt{threading.Event}, iar bufferele
+UI sunt protejate cu \texttt{threading.Lock}.
+
+Comenzile din UI sunt tratate prin modelul \texttt{pending-consume}. Interfata
+seteaza cereri pending, iar bucla realtime le aplica intr-un punct controlat:
+schimbarea metodei, a sursei, a VAD-ului, a SNR-ului, a distorsiunilor, a
+dispozitivelor, snapshot-ul si recording-ul. Aceasta decizie reduce riscul de
+conditii de cursa si pastreaza callback-ul audio simplu.
+
+Din punct de vedere practic, stabilitatea realtime este la fel de importanta ca
+valoarea metricilor. Un model cu scoruri bune, dar care produce intreruperi sau
+latenta mare, este greu de demonstrat. De aceea, motorul prefera sa piarda
+blocuri vechi atunci cand coada este plina, in loc sa acumuleze intarziere. In
+plus, daca metoda MaskNet este prea costisitoare pe CPU, utilizatorul poate
+comuta imediat la Spectral Subtraction sau Wiener Filter, pastrand aceeasi
+interfata de monitorizare.
+
+\chapter{Evaluare, limitari si concluzii}
+
+\section{Evaluare}
+
+Evaluarea cantitativa ruleaza toate metodele pe perechi clean/noisy, aliniaza
+semnalele si calculeaza PESQ, STOI, SNR, segmental SNR si LSD. Comanda
+principala este:
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli eval-all -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test
+\end{lstlisting}
+
+Pentru compararea mai multor checkpoint-uri exista \texttt{compare-checkpoints},
+iar \texttt{compare-latest} compara cel mai recent experiment cu o referinta.
+Evaluarea VAD este tratata separat prin \texttt{eval-vad} si \texttt{compare-vad}.
+Pe langa metrici, validarea operationala verifica rularea CLI-ului,
+incarcarea checkpoint-urilor, generarea graficelor, ascultarea fisierelor audio
+si stabilitatea demo-ului realtime.
+
+Rapoartele de evaluare sunt salvate in formate usor de inspectat si reutilizat.
+Fisierele CSV permit comparatii rapide intre metode si checkpoint-uri, iar
+fisierele JSON pastreaza structura completa a rezultatelor. Graficele si
+exemplele audio completeaza tabelele, deoarece diferentele perceptuale nu sunt
+intotdeauna evidente doar din valori numerice. In special pentru PESQ si STOI,
+este important sa se verifice daca imbunatatirea metricilor corespunde si unei
+imbunatatiri audibile.
+
+Rezultatele finale obtinute cu checkpoint-ul
+\path{train_balanced_res_20260614_091134/masknet_best.pth} sunt
+prezentate in tabelul~\ref{tab:rezultate_evaluare_finala}. Modelul MaskNet a
+fost antrenat pe LibriSpeech-DEMAND, iar evaluarea a fost realizata pe
+VoiceBank-DEMAND, astfel incat tabelul masoara si capacitatea de generalizare pe
+un set fix de benchmark.
+
+\begin{table}[htbp]
+\centering
+\caption{Rezultatele medii obtinute pe setul de test VoiceBank-DEMAND. Pentru LSD, valori mai mici indica rezultate mai bune.}
+\label{tab:rezultate_evaluare_finala}
+\begin{tabular}{lrrrrr}
+\toprule
+Metoda & PESQ & STOI & SNR (dB) & SegSNR (dB) & LSD \\
+\midrule
+Noisy & 1.972 & 0.921 & 8.447 & 1.548 & 13.923 \\
+Spectral Subtraction & 2.289 & 0.920 & 10.051 & 3.043 & 11.483 \\
+Wiener Filter & 2.150 & 0.922 & 8.971 & 2.119 & 12.025 \\
+MaskNet & 2.564 & 0.929 & 15.328 & 6.673 & 9.502 \\
+\midrule
+\multicolumn{6}{l}{\textit{Imbunatatire fata de semnalul zgomotos}} \\
+Spectral Subtraction & +0.317 & -0.001 & +1.604 & +1.495 & -2.440 \\
+Wiener Filter & +0.178 & +0.001 & +0.524 & +0.571 & -1.899 \\
+MaskNet & +0.592 & +0.008 & +6.882 & +5.125 & -4.421 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Modelul MaskNet obtine cele mai consistente imbunatatiri globale: cresterea
+PESQ este de \(+0.592\), SNR-ul creste cu \(+6.882\) dB, iar LSD scade cu
+\(4.421\). Cresterea STOI este mai mica, \(+0.008\), deoarece semnalul zgomotos
+are deja o valoare medie ridicata a inteligibilitatii (\(0.921\)). Prin urmare,
+castigul principal al modelului apare in calitatea perceptuala, reducerea
+distantei spectrale si raportul semnal-zgomot, nu doar in inteligibilitate.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{../results/final_report_assets/final_metrics_comparison.png}
+\caption{Comparatia valorilor medii pentru metodele evaluate.}
+\label{fig:final_metrics_comparison}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{../results/final_report_assets/final_improvements.png}
+\caption{Imbunatatirile metodelor fata de semnalul zgomotos.}
+\label{fig:final_improvements}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.82\textwidth]{../results/final_report_assets/training_loss_curve.png}
+\caption{Evolutia functiei de pierdere pentru experimentul final MaskNet.}
+\label{fig:training_loss_curve}
+\end{figure}
+
+Interpretarea rezultatelor trebuie facuta pe mai multe criterii. Spectral
+Subtraction si Wiener Filter sunt rapide si explicabile, dar pot produce
+artefacte muzicale. MaskNet este mai flexibil si invata relatii spectrale din
+date, insa necesita antrenare si resurse de inferenta. Un SNR mai mare nu
+garanteaza mereu calitate perceptuala mai buna, de aceea PESQ, STOI si
+ascultarea exemplelor audio raman importante.
+
+Compararea checkpoint-urilor are si rol diagnostic. Daca un model are pierdere
+de validare mai mica, dar scoruri PESQ/STOI similare, inseamna ca obiectivul de
+antrenare nu mai impinge calitatea perceptuala mai departe. Exact aceasta
+observatie a aparut la modelele de magnitudine, unde estimarea mastii IRM se
+imbunatatea, dar reconstructia era limitata de faza zgomotoasa. Aceasta analiza
+a justificat investigarea variantei complexe.
+
+\section{Analiza calitativa}
+
+Analiza calitativa completeaza evaluarea numerica. Pentru fiecare metoda, este
+util sa fie ascultate exemple din mai multe categorii: zgomot usor, zgomot
+puternic, vorbire slaba, segmente cu pauze si semnale cu distorsiuni. In
+exemplele cu zgomot usor, o metoda buna trebuie sa pastreze naturaletea vocii si
+sa evite supraprocesarea. In exemplele cu zgomot puternic, este acceptabil sa
+ramana o parte din zgomot daca inteligibilitatea vorbirii este pastrata. O
+metoda care elimina agresiv zgomotul, dar taie consoane sau produce voce
+metalica, poate obtine un SNR mai bun si totusi sa fie mai putin utila in
+practica.
+
+Spectrogramele ajuta la explicarea acestor observatii. Reducerea zgomotului se
+vede prin diminuarea energiei difuze dintre armonici, iar pastrarea vorbirii se
+vede prin continuitatea formantilor si a benzilor armonice. Daca spectrograma
+enhanced devine prea goala, inseamna ca metoda sterge si componente utile ale
+vorbirii. Daca ramane aproape identica cu intrarea, metoda este prea slaba.
+Aceasta analiza vizuala este importanta mai ales pentru compararea modelului de
+magnitudine cu Complex MaskNet: diferenta nu apare doar ca nivel de zgomot, ci
+si ca stabilitate a reconstructiei si ca pastrare a detaliilor vocale.
+
+Pentru demonstratie au fost exportate exemple audio si spectrograme in
+\path{results/final_demo_examples}. Figura~\ref{fig:low_snr_demo_example}
+prezinta un caz dificil din VoiceBank-DEMAND, cu SNR initial estimat la
+\(-3.09\) dB. Pentru acest fisier, MaskNet creste PESQ de la \(1.108\) la
+\(2.088\), iar SNR-ul de la \(-3.09\) dB la \(8.66\) dB. In acelasi timp,
+spectrograma pastreaza structura vorbirii mai clar decat semnalul zgomotos,
+ceea ce sustine interpretarea numerica.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{../results/final_demo_examples/low_snr/waveforms_spectrograms.png}
+\caption{Exemplu calitativ pentru un caz cu SNR scazut: forme de unda si spectrograme pentru semnalul curat, zgomotos si metodele de imbunatatire.}
+\label{fig:low_snr_demo_example}
+\end{figure}
+
+In final, rezultatele sunt interpretate prin combinarea celor trei perspective:
+metrici obiective, exemple audio si vizualizari. Aceasta abordare reduce riscul
+de a trage concluzii doar dintr-un scor izolat si ofera o imagine mai apropiata
+de utilizarea reala a sistemului.
+
+\section{Dificultati si compromisuri}
+
+Prima dificultate a fost lucrul cu fisiere audio eterogene: rate de esantionare
+diferite, fisiere stereo, durate diferite si perechi lipsa. Solutia a fost
+conversia mono, resampling-ul la 16 kHz, validarea dataset-ului si mixarea
+controlata cu zgomote DEMAND.
+
+A doua dificultate a fost alegerea reprezentarii spectrale. Fereastra de 25 ms
+si hop-ul de 10 ms ofera un compromis potrivit pentru vorbire, dar orice
+alegere STFT echilibreaza rezolutia temporala si cea frecventiala. In
+experimentele cu masca de magnitudine, valorile PESQ si STOI au inceput sa
+atinga un plafon: modelul reducea zgomotul, dar reconstructia continua sa
+foloseasca faza semnalului zgomotos. Aceasta limita a motivat trecerea catre
+Complex MaskNet, unde modelul estimeaza componente real-imaginar si poate
+corecta partial faza semnalului, nu doar magnitudinea.
+
+In modul realtime, compromisul principal este intre calitatea modelului si
+latenta. Modelele mai mari pot imbunatati semnalul, dar cresc timpul de
+procesare. De aceea, demo-ul permite schimbarea metodei in timpul rularii,
+include baseline-uri DSP si ofera controale dry/wet si gain.
+
+\section{Concluzii}
+
+Proiectul realizeaza un sistem complet de speech enhancement, combinand metode
+DSP cu retele neuronale MaskNet. Solutia include pregatirea datelor, generarea
+etichetelor VAD, antrenare supervizata, inferenta, evaluare, comparatii cu
+baseline-uri si demo realtime. Modelul recomandat, \texttt{balanced\_res},
+foloseste U-Net rezidual, LSTM bidirectional si attention, iar varianta
+\texttt{complex\_balanced\_res} extinde sistemul la estimarea mastilor complexe.
+
+Interfata realtime este componenta care face proiectul demonstrabil: afiseaza
+forme de unda, spectrograme, VAD live, scenarii, selectii de metoda si
+recording-uri. Astfel, sistemul poate fi evaluat nu doar prin tabele, ci si
+prin comportament audio-vizual.
+
+Limitari raman dependenta de datele disponibile, costul computational al
+inferentei realtime, dificultatea estimarii fazei si diferenta dintre metricile
+obiective si perceptia umana. Directii viitoare includ antrenarea pe date mai
+diverse, optimizare pentru realtime, export ONNX, functii de pierdere
+perceptuale, dezvoltarea variantei Complex MaskNet si evaluare subiectiva cu
+ascultatori umani.
+
+\begin{thebibliography}{9}
+\small
+
+\bibitem{pytorch}
+PyTorch Contributors.
+\textit{PyTorch Documentation}.
+\url{https://docs.pytorch.org/}
+
+\bibitem{torchaudio}
+TorchAudio Contributors.
+\textit{Torchaudio Documentation}.
+\url{https://pytorch.org/audio/stable/}
+
+\bibitem{stft}
+J. B. Allen and L. R. Rabiner.
+\textit{A unified approach to short-time Fourier analysis and synthesis}.
+Proceedings of the IEEE, vol. 65, no. 11, pp. 1558--1564, 1977.
+
+\bibitem{stoi}
+C. H. Taal, R. C. Hendriks, R. Heusdens and J. Jensen.
+\textit{An algorithm for intelligibility prediction of time-frequency weighted
+noisy speech}. IEEE Transactions on Audio, Speech, and Language Processing,
+vol. 19, no. 7, pp. 2125--2136, 2011.
+
+\bibitem{pesq}
+ITU-T.
+\textit{Recommendation P.862: Perceptual evaluation of speech quality (PESQ)}.
+International Telecommunication Union, 2001.
+
+\bibitem{unet}
+O. Ronneberger, P. Fischer and T. Brox.
+\textit{U-Net: Convolutional Networks for Biomedical Image Segmentation}.
+MICCAI 2015, LNCS 9351, pp. 234--241, Springer, 2015.
+
+\bibitem{wiener}
+N. Wiener.
+\textit{Extrapolation, Interpolation, and Smoothing of Stationary Time Series}.
+The MIT Press, 1949.
+
+\bibitem{demand}
+J. Thiemann, N. Ito and E. Vincent.
+\textit{The Diverse Environments Multi-channel Acoustic Noise Database}.
+2013.
+
+\end{thebibliography}
+
+\end{document}

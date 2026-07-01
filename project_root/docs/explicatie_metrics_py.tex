@@ -1,0 +1,338 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{romanian}
+\setmainfont{Latin Modern Roman}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{setspace}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\onehalfspacing
+\setlength{\parindent}{1.2cm}
+\setlength{\parskip}{0.25em}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{210,210,210}
+\definecolor{codekeyword}{RGB}{0,78,130}
+\definecolor{codestring}{RGB}{120,70,0}
+\definecolor{codecomment}{RGB}{80,120,80}
+
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codekeyword}\bfseries,
+    stringstyle=\color{codestring},
+    commentstyle=\color{codecomment}\itshape,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    numbers=left,
+    numberstyle=\tiny,
+    numbersep=8pt,
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4,
+    keepspaces=true
+}
+
+\newcommand{\codechunk}[2]{
+    \lstinputlisting[
+        style=pythonstyle,
+        firstline=#1,
+        lastline=#2,
+        firstnumber=#1
+    ]{../src/dsp/metrics.py}
+}
+
+\title{Explicatie detaliata a fisierului \texttt{src/dsp/metrics.py}}
+\author{Documentatie tehnica pentru proiectul de procesare audio}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\chapter{Rolul fisierului in proiect}
+
+Fisierul \texttt{src/dsp/metrics.py} contine functiile prin care proiectul masoara calitatea rezultatelor audio si performanta detectorului VAD. Daca fisierele precum \texttt{spectral\_subtraction.py}, \texttt{wiener\_filter.py} si \texttt{inference.py} produc semnale imbunatatite, acest fisier raspunde la intrebarea: cat de buna este imbunatatirea?
+
+Metricile implementate acopera doua zone:
+
+\begin{itemize}
+    \item evaluarea speech enhancement: SNR, STOI, PESQ, SI-SDR, segmental SNR si log spectral distance;
+    \item evaluarea VAD: accuracy, precision, recall, F1, miss rate si false alarm rate.
+\end{itemize}
+
+Acest modul este folosit ca infrastructura de evaluare. El permite compararea intre semnalul zgomotos, metodele clasice DSP si MaskNet.
+
+\chapter{Importuri si dependinte optionale}
+
+\section{Liniile 1--14}
+
+\codechunk{1}{14}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 1] Activeaza evaluarea amanata a adnotarilor de tip, pentru compatibilitate moderna.
+    \item[Linia 2] Importa \texttt{Dict}, folosit pentru tipul dictionarelor de metrici.
+    \item[Linia 3] Importa \texttt{numpy}, folosit pentru calcule numerice.
+    \item[Linia 4] Importa \texttt{config}, de unde se ia rata de esantionare implicita.
+    \item[Liniile 6--9] Incearca sa importe functia STOI din pachetul \texttt{pystoi}. Daca pachetul nu este instalat, variabila \texttt{\_stoi} devine \texttt{None}.
+    \item[Liniile 11--14] Incearca sa importe functia PESQ din pachetul \texttt{pesq}. Daca nu exista, \texttt{\_pesq} devine \texttt{None}.
+\end{description}
+
+Dependintele STOI si PESQ sunt tratate optional. Modulul poate fi incarcat chiar daca aceste pachete nu sunt instalate, iar eroarea apare doar cand se incearca folosirea metricii respective.
+
+\chapter{SNR global}
+
+\section{Liniile 16--36}
+
+\codechunk{16}{36}
+
+Functia \texttt{snr\_db} calculeaza raportul semnal-zgomot in decibeli:
+
+\[
+SNR_{dB} = 10\log_{10}\frac{P_{semnal}}{P_{zgomot}},
+\]
+
+unde:
+
+\[
+P_{semnal} = \frac{1}{N}\sum_n x[n]^2,
+\quad
+P_{zgomot} = \frac{1}{N}\sum_n (x[n]-\hat{x}[n])^2.
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 16] Defineste functia pentru semnalul curat si semnalul procesat.
+    \item[Liniile 17--19] Verifica daca vreun vector este gol. In acest caz ridica \texttt{ValueError}.
+    \item[Liniile 21--24] Daca semnalele au mai multe canale, le converteste la mono prin medie.
+    \item[Linia 25] Alege lungimea comuna minima.
+    \item[Liniile 27--28] Verifica daca exista suprapunere intre semnale.
+    \item[Liniile 30--31] Taie semnalele la aceeasi lungime si le converteste la \texttt{float32}.
+    \item[Linia 32] Calculeaza eroarea fata de referinta, interpretata ca zgomot/distorsiune.
+    \item[Liniile 33--35] Calculeaza puterea semnalului si puterea erorii, folosind \(\varepsilon\) pentru stabilitate.
+    \item[Linia 36] Returneaza SNR-ul in dB.
+\end{description}
+
+In acest proiect, un SNR mai mare inseamna ca semnalul procesat este mai apropiat energetic de semnalul curat.
+
+\chapter{STOI si PESQ}
+
+\section{STOI: liniile 38--46}
+
+\codechunk{38}{46}
+
+STOI inseamna \emph{Short-Time Objective Intelligibility}. Este o metrica folosita pentru inteligibilitatea vorbirii.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 38] Defineste functia \texttt{stoi\_score}.
+    \item[Liniile 39--40] Daca \texttt{pystoi} nu este instalat, ridica \texttt{ImportError}.
+    \item[Liniile 41--42] Daca rata de esantionare nu este transmisa, foloseste \texttt{config.SAMPLE\_RATE}.
+    \item[Liniile 43--45] Aliniaza semnalele la aceeasi lungime si le converteste la \texttt{float32}.
+    \item[Linia 46] Apeleaza implementarea STOI si returneaza scorul ca \texttt{float}.
+\end{description}
+
+\section{PESQ: liniile 48--56}
+
+\codechunk{48}{56}
+
+PESQ inseamna \emph{Perceptual Evaluation of Speech Quality}. Este o metrica perceptuala pentru calitatea vorbirii.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 48] Defineste functia \texttt{pesq\_score}.
+    \item[Liniile 49--50] Daca pachetul \texttt{pesq} nu este instalat, ridica \texttt{ImportError}.
+    \item[Liniile 51--52] Stabileste rata de esantionare implicita.
+    \item[Liniile 53--55] Aliniaza semnalele si le converteste la \texttt{float32}.
+    \item[Linia 56] Apeleaza PESQ in modul wideband, marcat prin argumentul \texttt{"wb"}.
+\end{description}
+
+STOI si PESQ sunt importante pentru ca merg dincolo de eroarea matematica simpla si incearca sa aproximeze inteligibilitatea si calitatea perceptuala.
+
+\chapter{Functii wrapper si SI-SDR}
+
+\section{Wrapper-e de compatibilitate: liniile 58--69}
+
+\codechunk{58}{69}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 58] Comentariul explica rolul functiilor: compatibilitate cu alte parti ale proiectului.
+    \item[Liniile 59--61] \texttt{compute\_snr} apeleaza \texttt{snr\_db}.
+    \item[Liniile 63--65] \texttt{compute\_stoi} apeleaza \texttt{stoi\_score}.
+    \item[Liniile 67--69] \texttt{compute\_pesq} apeleaza \texttt{pesq\_score}.
+\end{description}
+
+Aceste functii permit altor fisiere sa foloseasca denumiri standardizate fara sa depinda de numele interne.
+
+\section{SI-SDR: liniile 71--90}
+
+\codechunk{71}{90}
+
+SI-SDR inseamna \emph{Scale-Invariant Signal-to-Distortion Ratio}. Ideea este sa se proiecteze semnalul procesat pe semnalul curat, astfel incat diferenta de scala sa nu domine scorul.
+
+\[
+\alpha = \frac{\hat{x}^T x}{x^T x + \varepsilon},
+\quad
+s_{target} = \alpha x,
+\quad
+e = \hat{x} - s_{target}.
+\]
+
+Scorul este:
+
+\[
+SI\text{-}SDR =
+10\log_{10}
+\frac{\sum_n s_{target}[n]^2}
+{\sum_n e[n]^2+\varepsilon}.
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 71--72] Definesc functia si docstring-ul.
+    \item[Liniile 73--76] Convertesc semnalele multi-canal la mono.
+    \item[Liniile 78--80] Aliniaza semnalele la aceeasi lungime.
+    \item[Linia 83] Calculeaza factorul de proiectie \(\alpha\).
+    \item[Linia 84] Calculeaza componenta tinta scalata.
+    \item[Linia 85] Calculeaza eroarea/distorsiunea ramasa.
+    \item[Liniile 88--90] Calculeaza si returneaza scorul SI-SDR.
+\end{description}
+
+\chapter{Evaluarea VAD}
+
+\section{Liniile 92--116}
+
+\codechunk{92}{116}
+
+Functia \texttt{evaluate\_vad} compara etichetele reale VAD cu etichetele prezise.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 92--94] Defineste functia si converteste etichetele la intregi.
+    \item[Liniile 95--97] Aliniaza vectorii la aceeasi lungime.
+    \item[Liniile 98--101] Calculeaza valorile matricei de confuzie: true positive, true negative, false positive si false negative.
+    \item[Linia 102] Defineste o constanta mica pentru stabilitate.
+    \item[Linia 103] Calculeaza acuratetea.
+    \item[Linia 104] Calculeaza precizia.
+    \item[Linia 105] Calculeaza recall-ul.
+    \item[Linia 106] Calculeaza scorul F1.
+    \item[Linia 107] Calculeaza rata de ratari, adica proportia cadrelor vocale neidentificate.
+    \item[Linia 108] Calculeaza rata alarmelor false, adica proportia cadrelor de liniste marcate ca vorbire.
+    \item[Liniile 109--116] Returneaza toate metricile intr-un dictionar.
+\end{description}
+
+Formulele principale sunt:
+
+\[
+Precision = \frac{TP}{TP+FP},
+\quad
+Recall = \frac{TP}{TP+FN},
+\quad
+F1 = \frac{2PR}{P+R}.
+\]
+
+\chapter{Segmental SNR}
+
+\section{Liniile 119--152}
+
+\codechunk{119}{152}
+
+\texttt{segmental\_snr} calculeaza SNR-ul pe cadre scurte si apoi mediaza valorile. Aceasta metoda evita ca un singur segment foarte energetic sa domine scorul global.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 119--120] Definesc functia si docstring-ul.
+    \item[Liniile 121--128] Convertesc la mono, aliniaza lungimile si convertesc semnalele la \texttt{float32}.
+    \item[Linia 130] Calculeaza eroarea dintre semnalul curat si cel procesat.
+    \item[Linia 131] Calculeaza numarul de cadre complete.
+    \item[Liniile 133--134] Daca nu exista niciun cadru complet, returneaza \texttt{0.0}.
+    \item[Liniile 136--150] Parcurg cadrele, calculeaza SNR-ul fiecaruia si il limiteaza intre \(-10\) si \(35\) dB.
+    \item[Linia 152] Returneaza media valorilor pe cadre.
+\end{description}
+
+Limitarea valorilor pe cadre este o practica utila deoarece cadrele aproape tacute pot produce valori extreme.
+
+\chapter{Log Spectral Distance}
+
+\section{Liniile 155--180}
+
+\codechunk{155}{180}
+
+Log Spectral Distance masoara distanta dintre spectrele logaritmice ale semnalului curat si semnalului procesat:
+
+\[
+LSD_t =
+\sqrt{
+\frac{1}{F}
+\sum_f
+\left(
+10\log_{10}P_x(f,t)
+-
+10\log_{10}P_{\hat{x}}(f,t)
+\right)^2
+}.
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 155--156] Definesc functia si docstring-ul.
+    \item[Liniile 157--164] Convertesc la mono, aliniaza lungimile si convertesc la \texttt{float32}.
+    \item[Linia 167] Importa local \texttt{scipy.signal}. Importul local evita dependenta directa pana cand functia este folosita.
+    \item[Linia 168] Stabileste lungimea segmentului spectrogramelor.
+    \item[Liniile 169--170] Calculeaza spectrogramele de putere pentru semnalul curat si procesat.
+    \item[Liniile 173--175] Aliniaza dimensiunea temporala a celor doua spectrograme.
+    \item[Liniile 178--179] Calculeaza LSD pe fiecare cadru.
+    \item[Linia 180] Returneaza media distantei spectrale.
+\end{description}
+
+Pentru LSD, valori mai mici inseamna spectru mai apropiat de referinta curata.
+
+\chapter{Evaluatorul agregat}
+
+\section{Liniile 183--230}
+
+\codechunk{183}{230}
+
+Functia \texttt{evaluate\_speech\_enhancement} este interfata principala pentru evaluarea unui semnal imbunatatit fata de referinta curata.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 183--187] Definesc functia pentru semnalul curat, semnalul imbunatatit si rata de esantionare.
+    \item[Liniile 188--198] Documenteaza scopul: evaluare completa cu PESQ, STOI, SNR, SegSNR si LSD.
+    \item[Liniile 199--200] Stabileste rata de esantionare implicita.
+    \item[Linia 202] Creeaza dictionarul de rezultate.
+    \item[Liniile 205--208] Incearca sa calculeze PESQ. Daca apare o eroare, pune \texttt{0.0}.
+    \item[Liniile 210--213] Calculeaza STOI cu aceeasi strategie de fallback.
+    \item[Liniile 215--218] Calculeaza SNR.
+    \item[Liniile 220--223] Calculeaza segmental SNR.
+    \item[Liniile 225--228] Calculeaza LSD.
+    \item[Linia 230] Returneaza dictionarul de metrici.
+\end{description}
+
+Strategia cu \texttt{try/except} face ca evaluarea sa nu se opreasca complet daca o metrica nu este disponibila sau esueaza pentru un fisier. Dezavantajul este ca valoarea \texttt{0.0} poate ascunde motivul exact al erorii, deci pentru analiza detaliata trebuie consultate si logurile din scripturile de evaluare.
+
+\chapter{Fluxul complet al fisierului}
+
+Fluxul conceptual este:
+
+\begin{enumerate}
+    \item semnalul curat si semnalul procesat sunt aduse la aceeasi lungime;
+    \item daca sunt stereo, sunt convertite la mono;
+    \item se calculeaza metrici energetice: SNR, segmental SNR, SI-SDR;
+    \item se calculeaza metrici perceptuale, daca dependintele sunt instalate: STOI si PESQ;
+    \item se calculeaza distanta spectrala logaritmica;
+    \item pentru VAD, se calculeaza matricea de confuzie si metricile derivate.
+\end{enumerate}
+
+\chapter{Concluzie}
+
+\texttt{src/dsp/metrics.py} este fisierul care transforma rezultatele audio in valori masurabile. El este esential pentru compararea metodelor, pentru raportarea performantei si pentru validarea faptului ca MaskNet sau metodele DSP chiar imbunatatesc semnalul.
+
+Prin includerea metricilor SNR, STOI, PESQ, SI-SDR, segmental SNR, LSD si VAD, modulul acopera atat apropierea matematica fata de semnalul curat, cat si aspecte legate de inteligibilitate, perceptie si detectia vorbirii.
+
+\end{document}

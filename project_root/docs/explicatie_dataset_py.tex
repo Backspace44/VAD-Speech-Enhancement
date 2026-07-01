@@ -1,0 +1,476 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{romanian}
+\setmainfont{Latin Modern Roman}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{setspace}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\onehalfspacing
+\setlength{\parindent}{1.2cm}
+\setlength{\parskip}{0.25em}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{210,210,210}
+\definecolor{codekeyword}{RGB}{0,78,130}
+\definecolor{codestring}{RGB}{120,70,0}
+\definecolor{codecomment}{RGB}{80,120,80}
+
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codekeyword}\bfseries,
+    stringstyle=\color{codestring},
+    commentstyle=\color{codecomment}\itshape,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    numbers=left,
+    numberstyle=\tiny,
+    numbersep=8pt,
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4,
+    keepspaces=true
+}
+
+\newcommand{\codechunk}[2]{
+    \lstinputlisting[
+        style=pythonstyle,
+        firstline=#1,
+        lastline=#2,
+        firstnumber=#1
+    ]{../src/data_prep/dataset.py}
+}
+
+\title{Explicatie detaliata a fisierului \texttt{src/data\_prep/dataset.py}}
+\author{Documentatie tehnica pentru proiectul de procesare audio}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\chapter{Rolul fisierului in proiect}
+
+Fisierul \texttt{src/data\_prep/dataset.py} este una dintre componentele centrale ale proiectului, deoarece construieste efectiv exemplele folosite la antrenarea si validarea retelei MaskNet. El transforma fisiere audio brute in tensori pregatiti pentru retea: spectrograme, magnitudini, canale real-imaginar si masti tinta.
+
+Pe scurt, acest fisier face urmatoarele operatii:
+
+\begin{itemize}
+    \item gaseste fisierele audio curate, zgomotoase sau de zgomot;
+    \item permite doua moduri de lucru: perechi clean-noisy deja existente sau mixare clean+noise la rulare;
+    \item incarca audio cu \texttt{torchaudio};
+    \item converteste la mono si resampleaza la rata tinta;
+    \item aplica optional preprocesarea si augmentarea;
+    \item calculeaza STFT-ul semnalului curat, zgomotos si al zgomotului;
+    \item construieste mastile tinta pentru antrenare;
+    \item aplica optional etichete VAD peste masca;
+    \item face padding in batch pentru exemple cu lungimi diferite;
+    \item creeaza \texttt{DataLoader}-ele pentru train si validare.
+\end{itemize}
+
+In pipeline-ul MaskNet, acest fisier este responsabil pentru legatura dintre datele audio de pe disc si bucla de antrenare.
+
+\chapter{Importuri si dependinte}
+
+\section{Liniile 1--24}
+
+\codechunk{1}{24}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 1--4] Docstring-ul anunta scopul fisierului: dataset optimizat pentru speech enhancement, incarcare eficienta si suport pentru preprocesare.
+    \item[Linia 6] Importa PyTorch, folosit pentru tensori si operatii numerice.
+    \item[Linia 7] Importa \texttt{Dataset} si \texttt{DataLoader}, clasele standard PyTorch pentru date.
+    \item[Linia 8] Importa \texttt{torchaudio}, folosit pentru incarcarea fisierelor audio si resampling.
+    \item[Linia 9] Importa NumPy, folosit pentru unele calcule auxiliare.
+    \item[Linia 10] Importa \texttt{Path}, pentru lucrul robust cu cai de fisiere.
+    \item[Linia 11] Importa tipuri pentru adnotari: \texttt{Optional}, \texttt{Tuple}, \texttt{List}, \texttt{Callable}.
+    \item[Liniile 12--13] Importa \texttt{random} si \texttt{logging}.
+    \item[Liniile 15--19] Importa utilitare STFT: conversia complexa in canale, calculul mastii complexe si calculul STFT-ului.
+    \item[Linia 20] Importa \texttt{AudioPreprocessor}, folosit optional inainte de STFT.
+    \item[Linia 21] Importa generatorul de augmentari audio.
+    \item[Linia 22] Importa functia care potriveste fisiere clean-noisy dupa nume.
+    \item[Linia 24] Creeaza logger-ul modulului.
+\end{description}
+
+\chapter{Clasa \texttt{SpeechEnhancementDataset}}
+
+\section{Definitie si docstring: liniile 27--53}
+
+\codechunk{27}{53}
+
+Clasa \texttt{SpeechEnhancementDataset} mosteneste \texttt{torch.utils.data.Dataset}. Asta inseamna ca poate fi folosita direct de un \texttt{DataLoader} PyTorch.
+
+Docstring-ul descrie facilitatile principale: incarcare paralela, STFT calculat dinamic, mixare clean+noise la rulare, augmentare, preprocesare, caching si returnarea optionala a formelor de unda.
+
+\section{Constructorul: liniile 55--99}
+
+\codechunk{55}{99}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 55--77] Definesc parametrii constructorului. Acestia controleaza directoarele, parametrii STFT, lungimea maxima, augmentarea, preprocesarea, VAD-ul si mixarea la SNR.
+    \item[Linia 78] Apeleaza constructorul clasei parinte.
+    \item[Liniile 80--98] Salveaza toti parametrii in instanta. Directoarele sunt convertite in \texttt{Path}.
+    \item[Linia 94] Limiteaza \texttt{vad\_soft\_mask\_floor} in intervalul \([0,1]\), pentru a evita valori invalide.
+\end{description}
+
+Parametrii cei mai importanti pentru antrenare sunt:
+
+\begin{itemize}
+    \item \texttt{clean\_dir}: directorul cu vorbire curata;
+    \item \texttt{noise\_dir}: directorul cu zgomote, folosit pentru mixare la rulare;
+    \item \texttt{snr\_range}: intervalul de SNR din care se alege nivelul de zgomot;
+    \item \texttt{preprocessing}: transformarea aplicata inainte de STFT;
+    \item \texttt{use\_vad\_labels}: daca mastile sunt ponderate cu etichete VAD.
+\end{itemize}
+
+\chapter{Selectarea fisierelor audio}
+
+\section{Modul clean+noise: liniile 100--115}
+
+\codechunk{100}{115}
+
+Acest bloc este folosit cand exista \texttt{noise\_dir}. In loc sa foloseasca fisiere zgomotoase pregenerate, dataset-ul construieste semnalul zgomotos dinamic.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 100] Cauta fisiere curate \texttt{.wav} si \texttt{.flac}.
+    \item[Liniile 101--102] Daca exista director de zgomote, cauta fisierele de zgomot.
+    \item[Liniile 103--106] Verifica existenta fisierelor curate si a zgomotelor.
+    \item[Linia 107] Pastreaza toate fisierele curate.
+    \item[Linia 108] Initializeaza lista de fisiere zgomotoase ca lista goala, deoarece acestea vor fi generate la rulare.
+    \item[Liniile 109--115] Scriu in log numarul de fisiere si intervalul SNR folosit.
+\end{description}
+
+Acest mod este cel mai important pentru antrenarea pe LibriSpeech + zgomote, deoarece permite varietate mai mare decat un set fix de perechi.
+
+\section{Modul perechi clean-noisy: liniile 116--142}
+
+\codechunk{116}{142}
+
+Acest bloc este folosit cand nu exista \texttt{noise\_dir}, dar exista \texttt{noisy\_dir}. In acest caz, dataset-ul cauta perechi deja pregatite.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 116--118] Daca nu exista nici \texttt{noise\_dir}, nici \texttt{noisy\_dir}, se ridica eroare.
+    \item[Liniile 119--124] Apeleaza \texttt{find\_matched\_file\_pairs}, care potriveste fisiere curate si zgomotoase.
+    \item[Linia 126] Cauta fisierele zgomotoase.
+    \item[Liniile 128--129] Daca nu exista nicio pereche, opreste executia.
+    \item[Liniile 131--133] Separa perechile in liste de fisiere curate si zgomotoase.
+    \item[Liniile 136--142] Calculeaza cate fisiere au fost ignorate si scrie avertisment daca este cazul.
+\end{description}
+
+\section{Limitare si cache: liniile 144--157}
+
+\codechunk{144}{157}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 144--149] Daca \texttt{max\_samples} este setat, limiteaza dataset-ul la primele exemple. Este util pentru teste rapide.
+    \item[Linia 152] Initializeaza dictionarul de cache.
+    \item[Liniile 153--157] Daca \texttt{cache\_in\_memory=True}, proceseaza toate exemplele si le pastreaza in RAM.
+\end{description}
+
+\chapter{Accesarea exemplelor}
+
+\section{Lungimea si indexarea: liniile 159--181}
+
+\codechunk{159}{181}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 159--160] \texttt{\_\_len\_\_} returneaza numarul de fisiere curate, adica numarul de exemple.
+    \item[Liniile 162--176] \texttt{\_\_getitem\_\_} documenteaza dictionarul intors pentru fiecare exemplu.
+    \item[Liniile 178--179] Daca exemplul exista in cache, il returneaza direct.
+    \item[Linia 181] Altfel, proceseaza exemplul prin \texttt{\_load\_and\_process}.
+\end{description}
+
+Aceasta structura respecta contractul PyTorch: \texttt{DataLoader}-ul cere exemple prin index, iar dataset-ul returneaza un dictionar de tensori.
+
+\chapter{Procesarea unui exemplu}
+
+\section{Incarcare si mixare: liniile 183--211}
+
+\codechunk{183}{211}
+
+Metoda \texttt{\_load\_and\_process} este inima clasei.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 183--187] Definesc metoda si incarca semnalul curat.
+    \item[Linia 188] Initializeaza pozitia de crop, necesara ulterior pentru alinierea etichetelor VAD.
+    \item[Liniile 190--199] Modul clean+noise: alege generatorul random, taie semnalul curat daca este prea lung, alege un zgomot, il potriveste ca lungime, alege un SNR si produce semnalul zgomotos.
+    \item[Liniile 200--211] Modul perechi: incarca fisierul zgomotos, aliniaza lungimile, face eventual crop si calculeaza zgomotul ca diferenta intre noisy si clean.
+\end{description}
+
+Formula folosita conceptual pentru mixare este:
+
+\[
+y[n] = x[n] + \alpha d[n],
+\]
+
+unde \(\alpha\) este ales astfel incat raportul dintre puterea semnalului curat si puterea zgomotului scalat sa corespunda SNR-ului dorit.
+
+\section{Preprocesare si augmentare: liniile 214--231}
+
+\codechunk{214}{231}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 214--219] Daca exista preprocesor, acesta se aplica atat pe semnalul curat, cat si pe semnalul zgomotos. Apoi rezultatele sunt convertite inapoi in tensori.
+    \item[Liniile 222--226] Daca exista augmentare, aceasta se aplica pe semnalul zgomotos.
+    \item[Liniile 228--231] Se asigura ca ambele semnale sunt tensori PyTorch.
+\end{description}
+
+Acest bloc este important deoarece preprocesarea are loc inainte de STFT. In configuratia implicita folosita de \texttt{create\_dataloaders}, preprocesarea include normalizare peak si eliminare DC.
+
+\section{Calculul STFT: liniile 234--266}
+
+\codechunk{234}{266}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 234--241] Calculeaza STFT-ul complex pentru semnalul curat.
+    \item[Liniile 242--248] Calculeaza STFT-ul complex pentru semnalul zgomotos.
+    \item[Liniile 249--251] Extrage magnitudinea pentru clean/noisy si faza semnalului zgomotos.
+    \item[Liniile 253--260] Calculeaza STFT-ul zgomotului si magnitudinea lui.
+    \item[Liniile 262--265] Adauga dimensiunea de canal pentru magnitudini.
+    \item[Linia 266] Converteste STFT-ul complex zgomotos in doua canale: real si imaginar.
+\end{description}
+
+Pentru MaskNet, intrarea principala este spectrograma zgomotoasa, iar tinta este o masca ce spune cum trebuie modificata spectrograma pentru a se apropia de semnalul curat.
+
+\section{Mastile tinta: liniile 268--277}
+
+\codechunk{268}{277}
+
+Dataset-ul construieste doua masti:
+
+\[
+IRM(f,t)=
+\frac{|X(f,t)|}{|X(f,t)|+|D(f,t)|+\varepsilon},
+\]
+
+si masca complexa CRM, calculata prin \texttt{compute\_complex\_ratio\_mask}.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 269] Defineste constanta \(\varepsilon\).
+    \item[Linia 270] Calculeaza masca ideala de raport intre magnitudinea clean si suma clean+noise.
+    \item[Linia 271] Limiteaza masca intre 0 si 1.
+    \item[Liniile 272--277] Calculeaza masca complexa, cu limitare prin \texttt{complex\_mask\_clip}.
+\end{description}
+
+Masca complexa este esentiala pentru varianta MaskNet care invata componente real-imaginar, nu doar o masca de magnitudine.
+
+\section{Aplicarea VAD peste masti: liniile 279--307}
+
+\codechunk{279}{307}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 279--282] Daca VAD-ul este activ, incarca etichetele pentru exemplul curent.
+    \item[Liniile 283--294] Converteste etichetele in tensor si le aliniaza la numarul de cadre STFT.
+    \item[Linia 296] Limiteaza valorile VAD in intervalul \([0,1]\).
+    \item[Liniile 298--303] Daca etichetele sunt soft, aplica un prag de podea. Astfel cadrele incerte nu sunt sterse complet.
+    \item[Liniile 305--307] Aplica VAD-ul peste \texttt{ideal\_mask} si \texttt{complex\_mask}, prin broadcast pe frecvente.
+\end{description}
+
+Rolul acestui bloc este sa reduca influenta cadrelor de liniste asupra mastii tinta, mai ales cand se folosesc etichete VAD generate anterior.
+
+\section{Dictionarul de iesire: liniile 310--325}
+
+\codechunk{310}{325}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 310--318] Construiesc dictionarul intors pentru un exemplu: magnitudini, STFT complex pe canale, masca ideala, masca complexa, faza si nume fisier.
+    \item[Liniile 321--323] Daca \texttt{return\_audio=True}, include si formele de unda originale.
+    \item[Linia 325] Returneaza exemplul procesat.
+\end{description}
+
+\chapter{Functii auxiliare ale dataset-ului}
+
+\section{Generator random: liniile 327--330}
+
+\codechunk{327}{330}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 327--329] Daca mixarea determinista este activa, creeaza un generator random pornind de la \texttt{random\_seed + idx}.
+    \item[Linia 330] Altfel foloseste modulul global \texttt{random}.
+\end{description}
+
+Aceasta diferenta este folosita pentru validare: acelasi exemplu trebuie sa primeasca aceeasi combinatie clean-noise intre rulari.
+
+\section{Incarcare audio: liniile 332--340}
+
+\codechunk{332}{340}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 333] Incarca fisierul audio cu \texttt{torchaudio.load}.
+    \item[Liniile 334--335] Daca fisierul are mai multe canale, il converteste la mono.
+    \item[Liniile 336--339] Daca rata de esantionare difera, aplica resampling la rata dataset-ului.
+    \item[Linia 340] Scoate dimensiunea de canal si returneaza tensor \texttt{float}.
+\end{description}
+
+\section{Potrivirea lungimii zgomotului: liniile 342--349}
+
+\codechunk{342}{349}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 343--344] Daca zgomotul are deja lungimea corecta, il returneaza.
+    \item[Liniile 345--347] Daca zgomotul este mai lung, alege un segment aleator.
+    \item[Liniile 348--349] Daca zgomotul este mai scurt, il repeta pana acopera lungimea tinta.
+\end{description}
+
+\section{Mixare la SNR: liniile 351--359}
+
+\codechunk{351}{359}
+
+Metoda \texttt{\_mix\_at\_snr} calculeaza factorul de scalare al zgomotului.
+
+\[
+P_x = \operatorname{mean}(x^2),
+\quad
+P_d = \operatorname{mean}(d^2),
+\quad
+r = 10^{-SNR/10}.
+\]
+
+\[
+\alpha = \sqrt{\frac{rP_x}{P_d}}.
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 352--354] Calculeaza puterea semnalului curat si a zgomotului.
+    \item[Linia 355] Converteste SNR-ul in raport liniar pentru zgomot.
+    \item[Linia 356] Calculeaza factorul de scalare.
+    \item[Liniile 357--358] Scaleaza zgomotul si il aduna peste semnalul curat.
+    \item[Linia 359] Returneaza semnalul zgomotos si zgomotul scalat.
+\end{description}
+
+\section{Incarcarea etichetelor VAD: liniile 361--386}
+
+\codechunk{361}{386}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 361--364] Definesc metoda si ies imediat daca nu exista director VAD.
+    \item[Liniile 366--373] Construiesc calea catre fisierul \texttt{.npy} cu etichete VAD.
+    \item[Liniile 375--377] Daca fisierul lipseste, scriu avertisment si returneaza \texttt{None}.
+    \item[Liniile 379--383] Incarca etichetele si aplica offset de cadru daca a existat crop.
+    \item[Liniile 384--386] In caz de eroare, scriu mesaj in log si returneaza \texttt{None}.
+\end{description}
+
+\chapter{Functia de colare a batch-urilor}
+
+\section{Liniile 389--457}
+
+\codechunk{389}{457}
+
+Functia \texttt{collate\_fn\_pad} rezolva o problema practica: exemplele audio pot avea lungimi diferite, deci spectrogramele au numar diferit de cadre temporale. Un batch PyTorch cere tensori cu aceeasi forma, asa ca functia face padding pana la lungimea maxima din batch.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 389--394] Definesc functia si explica scopul.
+    \item[Linia 395] Gaseste numarul maxim de cadre temporale din batch.
+    \item[Liniile 397--403] Initializeaza liste pentru fiecare camp.
+    \item[Liniile 405--409] Verifica daca exemplele contin si forme de unda audio.
+    \item[Liniile 411--427] Parcurg fiecare exemplu si aplica padding pe dimensiunea temporala daca este necesar.
+    \item[Liniile 429--440] Adauga fiecare tensor in lista corespunzatoare.
+    \item[Liniile 442--450] Creeaza dictionarul final prin \texttt{torch.stack}.
+    \item[Liniile 453--455] Include audio brut daca este prezent.
+    \item[Linia 457] Returneaza batch-ul.
+\end{description}
+
+\chapter{Crearea DataLoader-elor}
+
+\section{Semnatura si parametri: liniile 460--508}
+
+\codechunk{460}{508}
+
+Functia \texttt{create\_dataloaders} este folosita de scriptul de antrenare pentru a construi \texttt{train\_loader} si \texttt{val\_loader}.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 460--485] Definesc parametrii: directoare, batch size, numar de workeri, parametri STFT, augmentare, preprocesare, VAD si SNR.
+    \item[Liniile 486--508] Documenteaza scopul functiei si iesirea.
+\end{description}
+
+\section{Augmentare si preprocesare: liniile 511--528}
+
+\codechunk{511}{528}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 511--517] Daca augmentarea este activa, creeaza un augmenter audio. Daca esueaza, o dezactiveaza.
+    \item[Liniile 519--528] Daca preprocesarea este activa, creeaza \texttt{AudioPreprocessor(sample\_rate=sample\_rate)}.
+\end{description}
+
+Implicit, \texttt{use\_preprocessing=True}; prin urmare, in antrenarea standard, semnalele trec prin preprocesare inainte de STFT.
+
+\section{Dataset-ul de train si validare: liniile 531--573}
+
+\codechunk{531}{573}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 531--551] Creeaza dataset-ul de antrenare. Are augmentare, preprocesare si mixare nedeterminista.
+    \item[Liniile 553--573] Creeaza dataset-ul de validare. Nu foloseste augmentare, iar mixarea este determinista.
+\end{description}
+
+Diferenta este intentionata: la antrenare se doreste variabilitate, iar la validare se doreste comparabilitate intre epoci.
+
+\section{DataLoader-ele finale: liniile 576--608}
+
+\codechunk{576}{608}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 576--586] Creeaza \texttt{train\_loader}: shuffle activ, drop last activ, workeri paraleli si \texttt{collate\_fn\_pad}.
+    \item[Linia 589] Calculeaza numarul de workeri pentru validare.
+    \item[Liniile 592--599] Construieste argumentele pentru \texttt{val\_loader}.
+    \item[Liniile 602--604] Adauga prefetch si persistent workers doar daca exista workeri.
+    \item[Linia 606] Creeaza \texttt{val\_loader}.
+    \item[Linia 608] Returneaza cele doua DataLoader-e.
+\end{description}
+
+\chapter{Fluxul complet de antrenare}
+
+Pentru un exemplu de antrenare in modul clean+noise, fluxul este:
+
+\begin{enumerate}
+    \item se alege un fisier curat;
+    \item se alege aleator un fisier de zgomot;
+    \item semnalul curat poate fi taiat la o lungime maxima;
+    \item zgomotul este taiat sau repetat ca sa aiba aceeasi lungime;
+    \item se alege un SNR din intervalul configurat;
+    \item zgomotul este scalat si adaugat peste clean;
+    \item clean si noisy sunt preprocesate;
+    \item noisy poate fi augmentat;
+    \item se calculeaza STFT pentru clean, noisy si noise;
+    \item se construiesc masca IRM si masca complexa;
+    \item optional se aplica etichete VAD peste masca;
+    \item exemplul este returnat catre DataLoader;
+    \item batch-ul este pad-uit si trimis catre bucla de training.
+\end{enumerate}
+
+\chapter{De ce este fisierul esential}
+
+\texttt{dataset.py} este esential pentru ca defineste exact ce invata MaskNet. Modelul nu vede fisiere audio brute, ci vede reprezentari produse aici. Daca acest fisier schimba modul de mixare, normalizare, STFT sau masca tinta, se schimba implicit si obiectivul de invatare al retelei.
+
+Cele mai importante decizii tehnice din fisier sunt:
+
+\begin{itemize}
+    \item mixarea clean+noise la rulare, pentru diversitate;
+    \item folosirea STFT complex, nu doar magnitudine;
+    \item construirea mastii complexe ca tinta;
+    \item integrarea optionala a VAD-ului;
+    \item padding-ul dinamic al spectrogramelor;
+    \item validarea determinista, pentru rezultate comparabile.
+\end{itemize}
+
+\chapter{Concluzie}
+
+Fisierul \texttt{src/data\_prep/dataset.py} este componenta care transforma datele audio in exemple de invatare pentru MaskNet. El incarca, aliniaza, mixeaza, preproceseaza, transforma in STFT si produce mastile tinta.
+
+Prin acest fisier, proiectul controleaza intreaga relatie dintre semnalul real si ceea ce invata reteaua. Din acest motiv, este unul dintre cele mai importante fisiere ale proiectului, alaturi de \texttt{mask\_model.py}, \texttt{train\_mask\_model.py}, \texttt{inference.py} si fisierele DSP.
+
+\end{document}

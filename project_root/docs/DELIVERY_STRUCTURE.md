@@ -9,8 +9,8 @@ This project keeps generated artifacts out of source control, but it now uses a 
 
 `checkpoints/`
 - Saved training runs and exported model checkpoints.
-- Recommended final VoiceBank checkpoint:
-  `voicebank_quality_final_checkpoint_v2/masknet_best.pth`
+- Recommended final LibriSpeech-trained checkpoint:
+  `librispeech_soft_vad_recommended_smoke/masknet_best.pth`
 
 `results/`
 - Evaluation reports, benchmark tables, VAD studies, demo recordings, and generated inventories.
@@ -55,8 +55,8 @@ This writes:
 
 The current project-level references are:
 
-1. `checkpoints/voicebank_quality_final_checkpoint_v2/masknet_best.pth`
-2. `checkpoints/voicebank_baseline_official_smoke/masknet_best.pth`
+1. `checkpoints/librispeech_soft_vad_recommended_smoke/masknet_best.pth`
+2. `checkpoints/librispeech_fast_benchmark_smoke/masknet_best.pth`
 3. `results/final_benchmark_report_v2/benchmark_best_by_dataset.csv`
 4. `results/voicebank_quality_v2_vs_baseline/checkpoint_comparison.csv`
 5. `results/audio_samples/`

@@ -1,0 +1,443 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{romanian}
+\setmainfont{Latin Modern Roman}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{setspace}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\onehalfspacing
+\setlength{\parindent}{1.2cm}
+\setlength{\parskip}{0.25em}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{210,210,210}
+\definecolor{codekeyword}{RGB}{0,78,130}
+\definecolor{codestring}{RGB}{120,70,0}
+\definecolor{codecomment}{RGB}{80,120,80}
+
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codekeyword}\bfseries,
+    stringstyle=\color{codestring},
+    commentstyle=\color{codecomment}\itshape,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    numbers=left,
+    numberstyle=\tiny,
+    numbersep=8pt,
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4,
+    keepspaces=true
+}
+
+\newcommand{\codechunk}[2]{
+    \lstinputlisting[
+        style=pythonstyle,
+        firstline=#1,
+        lastline=#2,
+        firstnumber=#1
+    ]{../src/dsp/preprocessing.py}
+}
+
+\title{Explicatie detaliata a fisierului \texttt{src/dsp/preprocessing.py}}
+\author{Documentatie tehnica pentru proiectul de procesare audio}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\chapter{Rolul fisierului in proiect}
+
+Fisierul \texttt{src/dsp/preprocessing.py} defineste etapa de pregatire a semnalului audio inainte ca acesta sa fie folosit de algoritmii DSP, de modelul neuronal sau de componentele de evaluare. In orice sistem de imbunatatire audio, calitatea preprocesarii influenteaza direct calitatea rezultatului final: un semnal cu rata de esantionare gresita, nivel prea mic, offset DC sau varfuri taiate poate produce rezultate instabile in STFT, in filtrele clasice sau in inferenta modelului.
+
+Modulul contine doua clase principale:
+
+\begin{itemize}
+    \item \texttt{AudioNormalizer}, responsabila pentru normalizarea amplitudinii prin mai multe metode;
+    \item \texttt{AudioPreprocessor}, responsabila pentru pipeline-ul complet: conversie mono, resampling, eliminare DC, taiere de liniste, normalizare, AGC, preemphasis si verificare de calitate.
+\end{itemize}
+
+La final exista functia \texttt{create\_preprocessor}, care construieste un preprocesor pornind de la un dictionar de configurare.
+
+\chapter{Docstring, importuri si dependinte}
+
+\section{Liniile 1--13}
+
+\codechunk{1}{13}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 1--4] Docstring-ul modulului descrie scopul general: preprocesare audio avansata, normalizare, procesare bazata pe VAD si verificari de calitate.
+    \item[Linia 6] Activeaza comportamente moderne pentru adnotarile de tip prin \texttt{from \_\_future\_\_ import annotations}. Tipurile pot fi evaluate mai tarziu, ceea ce ajuta la compatibilitate.
+    \item[Linia 7] Importa tipurile \texttt{Optional}, \texttt{Tuple}, \texttt{Dict} si \texttt{Any}, folosite in semnaturile functiilor.
+    \item[Linia 8] Importa \texttt{numpy}, biblioteca principala pentru operatii pe vectori audio.
+    \item[Linia 9] Importa \texttt{signal} din SciPy, folosit pentru filtre digitale.
+    \item[Linia 10] Importa \texttt{resample\_poly}, metoda de resampling polifazic.
+    \item[Linia 11] Importa \texttt{warnings}, folosit pentru avertismente cand semnalul este tacut sau degenerat.
+    \item[Linia 13] Importa \texttt{config}. In acest fisier importul nu este folosit direct in codul actual, dar indica legatura modulului cu setarile globale ale proiectului.
+\end{description}
+
+\chapter{Clasa \texttt{AudioNormalizer}}
+
+\section{Constructorul: liniile 16--46}
+
+\codechunk{16}{46}
+
+Clasa \texttt{AudioNormalizer} centralizeaza strategiile de normalizare. Normalizarea inseamna scalarea semnalului astfel incat amplitudinea, RMS-ul sau loudness-ul sa ajunga la un nivel tinta.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 16--17] Definesc clasa si docstring-ul ei.
+    \item[Liniile 19--24] Definesc constructorul. Parametrii principali sunt metoda, nivelul tinta si rata de esantionare.
+    \item[Liniile 25--32] Explica argumentele constructorului.
+    \item[Liniile 33--35] Salveaza configurarea in campurile instantei.
+    \item[Liniile 37--43] Creeaza dictionarul \texttt{methods}, care mapeaza numele metodei la functia concreta.
+    \item[Liniile 45--46] Verifica daca metoda ceruta exista. Daca nu, ridica \texttt{ValueError}.
+\end{description}
+
+Prin dictionarul de metode, apelarea normalizatorului devine simpla: numele metodei decide automat ce functie se executa.
+
+\section{Apelarea obiectului: liniile 48--50}
+
+\codechunk{48}{50}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 48] Defineste metoda speciala \texttt{\_\_call\_\_}. Aceasta permite ca obiectul sa fie folosit ca o functie.
+    \item[Linia 49] Documenteaza comportamentul: aplica normalizarea pe audio.
+    \item[Linia 50] Selecteaza functia din dictionar si o aplica pe semnal.
+\end{description}
+
+\chapter{Metodele de normalizare}
+
+\section{Normalizare dupa varf: liniile 52--74}
+
+\codechunk{52}{74}
+
+Normalizarea de varf scaleaza semnalul astfel incat valoarea absoluta maxima sa ajunga la un nivel tinta:
+
+\[
+y[n] = x[n]\cdot\frac{P_{tinta}}{\max_n |x[n]|}.
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 52--62] Definesc metoda si documentatia ei.
+    \item[Liniile 63--64] Daca nu se primeste nivel tinta, foloseste \texttt{0.95}. Aceasta lasa headroom si reduce riscul de clipping.
+    \item[Linia 66] Calculeaza amplitudinea maxima absoluta.
+    \item[Liniile 68--70] Daca semnalul este practic tacut, emite avertisment si il returneaza neschimbat.
+    \item[Linia 72] Scaleaza semnalul.
+    \item[Linia 74] Returneaza rezultatul ca \texttt{float32}.
+\end{description}
+
+\section{Normalizare RMS: liniile 76--111}
+
+\codechunk{76}{111}
+
+RMS-ul masoara nivelul energetic mediu:
+
+\[
+RMS = \sqrt{\frac{1}{N}\sum_{n=0}^{N-1}x[n]^2}.
+\]
+
+Nivelul in decibeli este:
+
+\[
+L_{dB}=20\log_{10}(RMS).
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 76--86] Definesc metoda si scopul ei: scalare la un nivel RMS tinta.
+    \item[Liniile 87--88] Alege nivelul tinta. Daca \texttt{target\_level} este negativ, il foloseste; altfel revine la \texttt{-20 dB}.
+    \item[Linia 91] Calculeaza RMS-ul semnalului.
+    \item[Liniile 93--95] Trateaza semnalul tacut.
+    \item[Linia 98] Calculeaza nivelul curent in dB.
+    \item[Liniile 101--102] Calculeaza diferenta de castig in dB si o transforma in factor liniar.
+    \item[Linia 104] Aplica factorul de castig.
+    \item[Liniile 107--109] Daca rezultatul depaseste 0.99, il reduce pentru a preveni clipping-ul.
+    \item[Linia 111] Returneaza semnalul normalizat.
+\end{description}
+
+\section{Normalizare loudness: liniile 113--153}
+
+\codechunk{113}{153}
+
+Aceasta metoda aproximeaza normalizarea perceptuala de loudness. In loc sa masoare doar energia bruta, aplica mai intai o filtrare de tip K-weighting, inspirata de ITU-R BS.1770.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 113--124] Definesc metoda si documentatia.
+    \item[Liniile 125--126] Aleg tinta implicita de \texttt{-23 LUFS}.
+    \item[Linia 130] Aplica filtrarea K-weighting.
+    \item[Linia 133] Calculeaza media patratica a semnalului ponderat perceptual.
+    \item[Liniile 135--137] Evita normalizarea semnalelor tacute.
+    \item[Linia 140] Estimeaza loudness-ul curent.
+    \item[Liniile 143--144] Calculeaza castigul necesar pentru tinta LUFS.
+    \item[Linia 146] Aplica normalizarea.
+    \item[Liniile 149--151] Limiteaza varful pentru siguranta.
+    \item[Linia 153] Returneaza rezultatul.
+\end{description}
+
+\section{Normalizare pe percentila: liniile 155--184}
+
+\codechunk{155}{184}
+
+Aceasta metoda este mai robusta la varfuri izolate. In loc sa foloseasca maximul absolut, foloseste o percentila, de obicei 95.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 155--160] Definesc metoda si parametrii: percentila si nivelul tinta.
+    \item[Liniile 161--171] Descriu intrarile si iesirea.
+    \item[Linia 172] Calculeaza valoarea absoluta a semnalului.
+    \item[Linia 173] Calculeaza percentila aleasa.
+    \item[Liniile 175--177] Trateaza cazul semnalelor tacute.
+    \item[Linia 179] Scaleaza semnalul dupa percentila.
+    \item[Linia 182] Aplica \texttt{tanh}, care comprima varfurile extreme intr-un mod bland.
+    \item[Linia 184] Returneaza rezultatul.
+\end{description}
+
+\section{Normalizare z-score: liniile 186--205}
+
+\codechunk{186}{205}
+
+Normalizarea z-score transforma semnalul la medie zero si deviatie standard unitara:
+
+\[
+y[n]=\frac{x[n]-\mu}{\sigma}.
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 186--195] Definesc metoda si documentatia.
+    \item[Liniile 196--197] Calculeaza media si deviatia standard.
+    \item[Liniile 199--201] Daca deviatia standard este aproape zero, scade doar media.
+    \item[Linia 203] Aplica formula z-score.
+    \item[Linia 205] Returneaza rezultatul.
+\end{description}
+
+\section{K-weighting: liniile 207--217}
+
+\codechunk{207}{217}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 207] Defineste metoda interna pentru filtrarea K-weighting simplificata.
+    \item[Linia 208] Docstring-ul explica faptul ca este o versiune simplificata a standardului ITU-R BS.1770.
+    \item[Liniile 210--211] Creeaza si aplica un filtru high-pass/shelf la 1500 Hz.
+    \item[Liniile 214--215] Aplica inca un filtru high-pass la 50 Hz pentru reducerea componentelor foarte joase.
+    \item[Linia 217] Returneaza semnalul ponderat.
+\end{description}
+
+\chapter{Clasa \texttt{AudioPreprocessor}}
+
+\section{Constructorul: liniile 220--266}
+
+\codechunk{220}{266}
+
+Clasa \texttt{AudioPreprocessor} reuneste toate operatiile de pregatire intr-un pipeline configurabil.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 220--221] Definesc clasa si scopul ei.
+    \item[Liniile 223--235] Definesc parametrii configurabili: rata de esantionare, normalizare, metoda de normalizare, DC removal, preemphasis, AGC, trim silence si optiunea VAD.
+    \item[Liniile 236--250] Documenteaza fiecare parametru.
+    \item[Liniile 251--260] Salveaza parametrii in instanta.
+    \item[Liniile 262--266] Daca normalizarea este activa, construieste un \texttt{AudioNormalizer}.
+\end{description}
+
+Campul \texttt{vad\_based} este salvat, dar nu este folosit in logica actuala a pipeline-ului. El pare pregatit pentru extensii viitoare in care preprocesarea ar putea depinde de zonele cu vorbire.
+
+\section{Pipeline-ul principal: liniile 268--328}
+
+\codechunk{268}{328}
+
+Metoda \texttt{\_\_call\_\_} este intrarea principala in preprocesor. Ea primeste semnalul audio si optional rata lui de esantionare originala, apoi intoarce semnalul preprocesat si un dictionar de metadate.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 268--282] Definesc metoda si documenteaza intrarile si iesirea.
+    \item[Linia 283] Creeaza dictionarul de metadate cu lungimea originala.
+    \item[Liniile 286--288] Daca semnalul are mai multe canale, il converteste la mono prin medie si noteaza conversia.
+    \item[Liniile 291--295] Daca rata de esantionare difera de tinta, face resampling si salveaza ratele in metadate.
+    \item[Liniile 298--300] Elimina offset-ul DC daca optiunea este activa.
+    \item[Liniile 303--305] Taie linistea de la margini daca optiunea este activa.
+    \item[Liniile 308--310] Aplica normalizarea configurata.
+    \item[Liniile 313--315] Aplica AGC daca este activ.
+    \item[Liniile 318--320] Aplica preemphasis daca este activ.
+    \item[Liniile 323--324] Calculeaza metricile de calitate si le pune in metadate.
+    \item[Linia 326] Salveaza lungimea finala.
+    \item[Linia 328] Returneaza semnalul \texttt{float32} si metadatele.
+\end{description}
+
+Ordinea operatiilor este importanta: resampling-ul si DC removal-ul sunt facute inainte de normalizare, astfel incat nivelul final sa fie calculat pe semnalul deja aliniat cu formatul proiectului.
+
+\chapter{Operatii auxiliare de preprocesare}
+
+\section{Resampling: liniile 330--337}
+
+\codechunk{330}{337}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 330] Defineste metoda de resampling.
+    \item[Linia 331] Docstring-ul mentioneaza resampling-ul polifazic.
+    \item[Liniile 332--333] Daca rata originala este deja egala cu tinta, returneaza semnalul neschimbat.
+    \item[Linia 335] Aplica \texttt{resample\_poly}, o metoda eficienta si de calitate buna pentru schimbarea ratei de esantionare.
+    \item[Linia 337] Returneaza semnalul resamplat.
+\end{description}
+
+\section{Eliminarea offset-ului DC: liniile 339--341}
+
+\codechunk{339}{341}
+
+Offset-ul DC este media nenula a semnalului. Eliminarea lui inseamna:
+
+\[
+y[n] = x[n] - \mu_x.
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 339] Defineste metoda.
+    \item[Linia 340] Explica simplu operatia: se scade media.
+    \item[Linia 341] Returneaza semnalul centrat in jurul lui zero.
+\end{description}
+
+\section{Preemphasis si deemphasis: liniile 343--362}
+
+\codechunk{343}{362}
+
+Preemphasis-ul amplifica frecventele inalte si este frecvent folosit in prelucrarea vorbirii:
+
+\[
+y[n] = x[n] - \alpha x[n-1].
+\]
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 343--349] Definesc si aplica preemphasis-ul. Primul esantion este pastrat, iar restul folosesc diferenta fata de esantionul precedent.
+    \item[Liniile 351--362] Definesc operatia inversa. Formula foloseste recursiv esantionul deja reconstruit:
+    \[
+    y[n] = x[n] + \alpha y[n-1].
+    \]
+\end{description}
+
+\section{Taierea linistii: liniile 364--416}
+
+\codechunk{364}{416}
+
+Metoda \texttt{trim\_silence\_edges} elimina zonele de liniste de la inceputul si sfarsitul semnalului.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 364--378] Definesc metoda si documenteaza pragul relativ.
+    \item[Linia 380] Calculeaza energia instantanee.
+    \item[Liniile 383--385] Netezesc energia cu o fereastra de 20 ms.
+    \item[Liniile 388--389] Calculeaza pragul ca fractie din energia maxima.
+    \item[Linia 392] Marcheaza esantioanele considerate non-silent.
+    \item[Liniile 394--396] Daca nu exista zone non-silent, returneaza semnalul original.
+    \item[Liniile 399--401] Gaseste primul si ultimul esantion non-silent.
+    \item[Liniile 404--406] Adauga o margine de 50 ms pentru a nu taia agresiv inceputul sau finalul vorbirii.
+    \item[Linia 408] Extrage segmentul ramas.
+    \item[Liniile 410--414] Construieste informatia de taiere.
+    \item[Linia 416] Returneaza semnalul taiat si metadatele.
+\end{description}
+
+\chapter{Control automat al castigului}
+
+\section{Liniile 418--491}
+
+\codechunk{418}{491}
+
+AGC, sau \emph{Automatic Gain Control}, ajusteaza nivelul semnalului in timp astfel incat volumul sa fie mai constant.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 418--436] Definesc metoda si parametrii: timp de atac, timp de revenire si nivel tinta.
+    \item[Liniile 438--439] Definesc cadre de 20 ms si hop de 10 ms.
+    \item[Linia 441] Calculeaza numarul de cadre.
+    \item[Liniile 444--451] Calculeaza RMS-ul fiecarui cadru.
+    \item[Liniile 454--455] Convertesc timpii de atac si revenire in numar de cadre.
+    \item[Liniile 457--468] Netezesc RMS-ul. Cand nivelul creste, folosesc constanta de atac; cand scade, folosesc constanta de release.
+    \item[Liniile 471--476] Calculeaza castigul necesar pentru fiecare cadru.
+    \item[Linia 479] Limiteaza castigul intre 0.1 si 10 pentru a evita modificari extreme.
+    \item[Liniile 482--486] Interpoleaza castigul la nivel de esantion.
+    \item[Linia 489] Aplica castigul pe semnal.
+    \item[Linia 491] Returneaza rezultatul.
+\end{description}
+
+AGC-ul este util in inregistrari unde vorbitorul se apropie sau se indeparteaza de microfon. Totusi, daca este prea agresiv, poate ridica si zgomotul de fundal in pauze.
+
+\chapter{Verificarea calitatii audio}
+
+\section{Liniile 493--561}
+
+\codechunk{493}{561}
+
+Metoda \texttt{check\_audio\_quality} produce un dictionar cu indicatori utili pentru diagnostic.
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Liniile 493--499] Definesc metoda si descriu iesirea.
+    \item[Linia 500] Initializeaza dictionarul \texttt{quality}.
+    \item[Liniile 503--505] Calculeaza cate esantioane sunt aproape de clipping si raportul lor.
+    \item[Liniile 508--518] Calculeaza varful, RMS-ul si gama dinamica in dB.
+    \item[Liniile 521--522] Calculeaza proportia de esantioane foarte apropiate de zero.
+    \item[Liniile 525--527] Sorteaza energia si estimeaza separat un \emph{noise floor} si o energie de semnal.
+    \item[Liniile 529--534] Estimeaza SNR-ul. Daca zgomotul este aproape zero, pune o valoare maxima conventionala de 60 dB.
+    \item[Liniile 537--559] Construieste un scor de calitate din 100, penalizand clipping-ul, gama dinamica mica, prea multa liniste si SNR-ul slab.
+    \item[Linia 561] Returneaza dictionarul de calitate.
+\end{description}
+
+Acest scor nu este o masura perceptuala perfecta, dar este foarte util pentru detectarea rapida a problemelor evidente din semnal.
+
+\chapter{Functia factory}
+
+\section{Liniile 564--588}
+
+\codechunk{564}{588}
+
+\begin{description}[leftmargin=2.9cm,style=nextline]
+    \item[Linia 564] Defineste functia \texttt{create\_preprocessor}.
+    \item[Liniile 565--573] Documenteaza faptul ca functia primeste un dictionar de configurare si returneaza un \texttt{AudioPreprocessor}.
+    \item[Liniile 574--575] Daca nu exista dictionar, creeaza unul gol.
+    \item[Liniile 577--588] Construieste preprocesorul, citind fiecare optiune din dictionar si folosind valori implicite cand cheia lipseste.
+\end{description}
+
+Aceasta functie este utila in scripturi sau configurari experimentale, unde parametrii pot veni dintr-un fisier JSON/YAML sau dintr-un dictionar Python.
+
+\chapter{Fluxul complet al fisierului}
+
+Fluxul tipic este:
+
+\begin{enumerate}
+    \item se creeaza un \texttt{AudioPreprocessor};
+    \item se primeste un semnal audio brut;
+    \item semnalul este convertit la mono daca este nevoie;
+    \item este resamplat la rata tinta;
+    \item se elimina offset-ul DC;
+    \item optional se taie linistea de la margini;
+    \item se aplica normalizarea aleasa;
+    \item optional se aplica AGC si preemphasis;
+    \item se calculeaza diagnostic de calitate;
+    \item se returneaza semnalul pregatit si metadatele.
+\end{enumerate}
+
+\chapter{Observatii tehnice}
+
+\begin{itemize}
+    \item Fisierul lucreaza predominant cu \texttt{numpy.ndarray}, ceea ce il face compatibil cu SciPy si cu majoritatea bibliotecilor audio.
+    \item Returnarea finala ca \texttt{float32} este potrivita pentru pipeline-uri audio si pentru interfata cu PyTorch.
+    \item Normalizarea este separata in clasa proprie, deci poate fi folosita independent de pipeline-ul complet.
+    \item \texttt{metadata} este important pentru audit: dupa preprocesare se poate vedea ce transformari au fost aplicate.
+    \item Optiunea \texttt{vad\_based} exista in configurare, dar nu influenteaza inca fluxul intern.
+\end{itemize}
+
+\chapter{Concluzie}
+
+\texttt{src/dsp/preprocessing.py} este un fisier central pentru robustetea sistemului. El pregateste semnalul audio inainte de etapele de analiza, filtrare, inferenta sau evaluare. Prin normalizare, resampling, eliminare DC, taiere de liniste, AGC si verificari de calitate, modulul reduce variabilitatea datelor de intrare si face restul sistemului mai stabil.
+
+Din perspectiva proiectului, acest fisier functioneaza ca o poarta de intrare pentru semnalul audio: transforma audio brut intr-o forma mai controlata, mai usor de analizat si mai sigura pentru metodele de speech enhancement.
+
+\end{document}

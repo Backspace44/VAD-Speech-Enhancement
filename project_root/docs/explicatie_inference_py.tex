@@ -1,0 +1,288 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{romanian}
+\usepackage[margin=2.25cm]{geometry}
+\usepackage{setspace}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[
+    colorlinks,
+    linkcolor={black},
+    citecolor={black},
+    urlcolor={blue}
+]{hyperref}
+
+\onehalfspacing
+\setlength{\emergencystretch}{3em}
+\setlength{\parskip}{0.15em}
+\setlist{nosep,leftmargin=*}
+
+\definecolor{codebackground}{rgb}{0.96,0.96,0.96}
+\definecolor{codecomment}{rgb}{0.23,0.45,0.30}
+\definecolor{codekeyword}{rgb}{0.10,0.20,0.55}
+\definecolor{codestring}{rgb}{0.55,0.15,0.15}
+
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{codebackground},
+    basicstyle=\ttfamily\scriptsize,
+    breaklines=true,
+    frame=single,
+    columns=fullflexible,
+    keepspaces=true,
+    showstringspaces=false,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{codekeyword}\bfseries,
+    commentstyle=\color{codecomment},
+    stringstyle=\color{codestring},
+    tabsize=4
+}
+\lstset{style=codestyle}
+
+\newcommand{\codechunk}[2]{%
+\subsection*{Liniile #1--#2}
+\lstinputlisting[language=Python,firstline=#1,lastline=#2,firstnumber=#1]{../src/models/inference.py}
+}
+
+\title{Explicarea fisierului \texttt{inference.py}}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\clearpage
+
+\chapter{Rolul fisierului \texttt{inference.py}}
+
+Fisierul \path{src/models/inference.py} contine utilitarele prin care modelul
+MaskNet este incarcat dintr-un checkpoint si aplicat pe un semnal audio. Acest
+fisier este important deoarece face legatura dintre modelul antrenat si folosirea
+lui in demo-uri, evaluare si sistemul real-time.
+
+Din punct de vedere functional, fisierul are doua responsabilitati principale:
+
+\begin{itemize}
+    \item reconstruirea arhitecturii MaskNet din configuratia salvata in checkpoint;
+    \item transformarea unui waveform zgomotos in waveform imbunatatit, prin STFT,
+    predictia mastii si ISTFT.
+\end{itemize}
+
+Exista doua moduri de inferenta:
+
+\begin{itemize}
+    \item \textbf{masca de magnitudine}: modelul primeste \(|Y|\), prezice o masca
+    \(\hat{M}\), iar reconstructia foloseste faza semnalului zgomotos;
+    \item \textbf{masca complexa}: modelul primeste canale real/imaginar, prezice
+    o masca complexa, iar reconstructia se face direct din STFT complex.
+\end{itemize}
+
+\chapter{Importuri}
+
+\codechunk{1}{18}
+
+\begin{description}
+    \item[Linia 1.] Docstring-ul defineste fisierul ca un modul de utilitare
+    comune pentru inferenta MaskNet.
+
+    \item[Linia 3.] Activeaza adnotarile amanate. Acest lucru permite folosirea
+    unor hint-uri de tip mai moderne, fara a forta evaluarea lor imediata la
+    import.
+
+    \item[Linia 5.] Importa \texttt{Path}, folosit pentru a accepta checkpoint-uri
+    atat ca string, cat si ca obiect de cale.
+
+    \item[Liniile 7--8.] Importa NumPy si PyTorch. NumPy este folosit pentru
+    waveform-ul de intrare/iesire, iar PyTorch pentru tensorii de inferenta si
+    incarcarea checkpoint-ului.
+
+    \item[Linia 10.] Importa configuratia globala a proiectului, de unde sunt
+    preluate valorile implicite pentru \texttt{N\_FFT}, \texttt{HOP\_LEN} si
+    \texttt{FRAME\_LEN}.
+
+    \item[Liniile 11--17.] Importa functiile STFT/ISTFT si operatiile pentru masti
+    complexe. Acestea sunt folosite pentru transformarea dintre domeniul timp si
+    domeniul timp-frecventa.
+
+    \item[Linia 18.] Importa clasa \texttt{MaskNet}, necesara pentru reconstruirea
+    modelului inainte de incarcarea ponderilor.
+\end{description}
+
+\chapter{Incarcarea checkpoint-ului}
+
+\codechunk{21}{24}
+
+\begin{description}
+    \item[Linia 21.] Defineste functia \texttt{load\_masknet\_checkpoint}. Ea primeste
+    calea catre checkpoint si dispozitivul PyTorch pe care va fi incarcat modelul.
+    Tipul returnat este \texttt{MaskNet}.
+
+    \item[Linia 22.] Docstring-ul explica scopul direct: incarcarea modelului din
+    checkpoint-ul de training.
+
+    \item[Linia 23.] \texttt{torch.load} citeste fisierul checkpoint. Parametrul
+    \texttt{map\_location=device} asigura incarcarea direct pe CPU sau GPU, in
+    functie de context. \texttt{weights\_only=False} permite citirea intregului
+    dictionar salvat, nu doar a ponderilor.
+
+    \item[Linia 24.] Extrage \texttt{model\_config} din checkpoint. Daca acesta nu
+    exista, se foloseste dictionar gol, iar modelul va fi construit cu valori
+    implicite.
+\end{description}
+
+\codechunk{26}{38}
+
+\begin{description}
+    \item[Liniile 26--38.] Reconstruiesc arhitectura MaskNet pe baza configuratiei
+    salvate. Aceasta etapa este esentiala: ponderile unui model pot fi incarcate
+    corect doar daca arhitectura are aceeasi structura ca la antrenare.
+
+    \item[Canale de intrare/iesire.] \texttt{in\_channels} si \texttt{output\_channels}
+    disting intre modelul de magnitudine si modelul complex. Pentru magnitudine,
+    valorile sunt de obicei 1. Pentru CRM, valorile sunt 2.
+
+    \item[Componente optionale.] \texttt{use\_lstm}, \texttt{use\_attention},
+    \texttt{use\_residual} si \texttt{use\_depthwise} refac exact varianta arhitecturala
+    folosita in checkpoint.
+
+    \item[Tipul mastii.] \texttt{mask\_type}, \texttt{output\_activation},
+    \texttt{output\_scale} si \texttt{complex\_mask\_clip} controleaza modul in care
+    iesirea modelului este interpretata.
+\end{description}
+
+\codechunk{40}{51}
+
+\begin{description}
+    \item[Liniile 40--43.] Codul accepta doua denumiri posibile pentru ponderi:
+    \texttt{model\_state\_dict} si \texttt{model\_state}. Aceasta compatibilitate
+    este utila daca diferite scripturi de training au salvat checkpoint-urile cu
+    chei usor diferite.
+
+    \item[Liniile 44--47.] Daca checkpoint-ul nu contine niciuna dintre cheile
+    asteptate, se ridica o eroare explicita. Mesajul include cheile gasite, ceea
+    ce ajuta la diagnosticarea unui checkpoint incompatibil.
+
+    \item[Linia 49.] Muta modelul pe dispozitivul cerut: CPU sau CUDA.
+
+    \item[Linia 50.] Pune modelul in modul \texttt{eval}. Acest lucru dezactiveaza
+    comportamentele de training, precum dropout-ul, si face BatchNorm-ul sa foloseasca
+    statisticile invatate.
+
+    \item[Linia 51.] Intoarce modelul pregatit pentru inferenta.
+\end{description}
+
+\chapter{Functia principala de enhancement}
+
+\codechunk{54}{69}
+
+\begin{description}
+    \item[Liniile 54--61.] Defineste functia \texttt{enhance\_audio\_with\_masknet}.
+    Ea primeste waveform-ul zgomotos ca \texttt{np.ndarray}, modelul incarcat,
+    dispozitivul PyTorch si, optional, parametrii STFT.
+
+    \item[Linia 62.] Docstring-ul formuleaza scopul: imbunatatirea unui waveform
+    zgomotos folosind modelul MaskNet antrenat.
+
+    \item[Linia 63.] Converteste semnalul NumPy in tensor PyTorch \texttt{float}
+    si il muta pe dispozitivul de inferenta.
+
+    \item[Liniile 64--66.] Daca parametrii STFT nu sunt furnizati explicit, sunt
+    folositi cei din \texttt{config.py}: \texttt{N\_FFT}, \texttt{HOP\_LEN} si
+    \texttt{FRAME\_LEN}.
+
+    \item[Linia 68.] Citeste tipul mastii din model. Daca modelul nu are atributul,
+    se presupune masca de magnitudine.
+
+    \item[Linia 69.] Activeaza autocast doar pe CUDA. Aceasta permite mixed precision
+    in inferenta GPU, reducand costul computational.
+\end{description}
+
+\chapter{Ramura pentru masca complexa}
+
+\codechunk{71}{91}
+
+\begin{description}
+    \item[Linia 71.] Verifica daca modelul este de tip \texttt{complex}. In acest
+    caz, modelul va lucra cu spectrograma complexa, nu doar cu magnitudinea.
+
+    \item[Liniile 72--78.] Calculeaza STFT complex:
+    \[
+    Y[k,m] \in \mathbb{C}.
+    \]
+    Parametrul \texttt{return\_complex=True} face ca functia sa intoarca direct
+    tensorul complex.
+
+    \item[Liniile 79--82.] Inferenta ruleaza fara gradienti, prin
+    \texttt{torch.inference\_mode}. In interior, autocast-ul este activ doar pe
+    CUDA. \texttt{complex\_to\_channels} transforma STFT-ul complex in doua canale:
+    partea reala si partea imaginara. \texttt{unsqueeze(0)} adauga dimensiunea de
+    batch.
+
+    \item[Linia 84.] Aplica masca complexa prezisa peste STFT-ul zgomotos:
+    \[
+    \hat{S}[k,m] = \hat{M}_{\mathbb{C}}[k,m] \cdot Y[k,m].
+    \]
+
+    \item[Liniile 85--91.] Reconstruieste waveform-ul prin ISTFT complexa. Parametrul
+    \texttt{length=len(noisy\_audio)} forteaza iesirea sa aiba aceeasi lungime ca
+    semnalul de intrare.
+\end{description}
+
+\chapter{Ramura pentru masca de magnitudine}
+
+\codechunk{92}{112}
+
+\begin{description}
+    \item[Linia 92.] Ramura \texttt{else} trateaza cazul standard: masca de magnitudine.
+
+    \item[Liniile 93--98.] Calculeaza STFT-ul si separa magnitudinea si faza:
+    \[
+    Y[k,m] = |Y[k,m]| e^{j\angle Y[k,m]}.
+    \]
+
+    \item[Liniile 99--102.] Ruleaza modelul fara gradienti si cu autocast optional.
+    \texttt{unsqueeze(0).unsqueeze(0)} adauga dimensiunile de batch si canal,
+    transformand spectrograma \((F,T)\) in \((1,1,F,T)\).
+
+    \item[Linia 104.] Masca prezisa este eliminata de dimensiunile artificiale si
+    inmultita cu magnitudinea zgomotoasa:
+    \[
+    |\hat{S}[k,m]| = \hat{M}[k,m] \cdot |Y[k,m]|.
+    \]
+
+    \item[Liniile 105--112.] Reconstruieste waveform-ul prin ISTFT, folosind
+    magnitudinea imbunatatita si faza semnalului zgomotos. Aceasta este abordarea
+    clasica pentru modelele care estimeaza doar magnitudinea.
+\end{description}
+
+\codechunk{113}{113}
+
+\begin{description}
+    \item[Linia 113.] Rezultatul final este detasat din graful PyTorch, mutat pe
+    CPU si convertit inapoi in \texttt{np.ndarray}. Astfel, functia poate fi folosita
+    usor in codul DSP, evaluare, demo offline si real-time.
+\end{description}
+
+\chapter{Concluzie}
+
+\texttt{inference.py} este fisierul care transforma modelul antrenat intr-un
+instrument utilizabil. \texttt{load\_masknet\_checkpoint} reconstruieste arhitectura
+si incarca ponderile, iar \texttt{enhance\_audio\_with\_masknet} executa pipeline-ul
+de inferenta: waveform \(\rightarrow\) STFT \(\rightarrow\) predictie masca
+\(\rightarrow\) aplicare masca \(\rightarrow\) ISTFT.
+
+Importanta fisierului este data de faptul ca aceeasi logica este reutilizata in
+mai multe locuri ale proiectului: evaluare, demo offline si demo real-time.
+Astfel, comportamentul modelului ramane consecvent indiferent daca este folosit
+pe fisiere sau pe blocuri audio live.
+
+\end{document}

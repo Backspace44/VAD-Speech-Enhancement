@@ -4,27 +4,25 @@ Noise reduction system combining deep learning (U-Net + LSTM + Attention) with c
 
 Current recommended training setup: `stage2_recommended` = `balanced_res + AdamW + OneCycleLR + MSE`.
 Current recommended LibriSpeech VAD setup: `librispeech_soft_vad_recommended`.
-Official presets for the upgraded project: `voicebank_baseline_official`, `voicebank_quality_final`, `librispeech_fast_benchmark`, `librispeech_soft_vad_recommended`.
+Training/validation uses LibriSpeech-DEMAND only. VoiceBank-DEMAND is reserved for benchmarking, checkpoint comparisons, and plots.
+Official training presets: `stage2_recommended`, `librispeech_fast_benchmark`, `librispeech_soft_vad_recommended`, `librispeech_complex_masknet_recommended`.
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
 
-# Stage-0 health check
-python -m src.tools.healthcheck --dataset voicebank
+# Stage-0 health check for the training dataset
+python -m src.tools.healthcheck --dataset librispeech
 
 # Unified project CLI
-python -m src.tools.project_cli healthcheck -- --dataset voicebank
+python -m src.tools.project_cli healthcheck -- --dataset librispeech
 
 # Recommended training (stage 2)
 python -m src.train.train_mask_model --experiment-preset stage2_recommended --max-batches 30
 
 # Same recommended command via unified CLI
 python -m src.tools.project_cli train -- --experiment-preset stage2_recommended --max-batches 30
-
-# Official VoiceBank baseline
-python -m src.train.train_mask_model --experiment-preset voicebank_baseline_official --max-batches 30
 
 # Recommended LibriSpeech training with soft VAD gating
 python -m src.train.train_mask_model --experiment-preset librispeech_soft_vad_recommended --max-batches 30
@@ -35,9 +33,6 @@ python -m src.train.train_mask_model --experiment-preset librispeech_complex_mas
 
 # Fast LibriSpeech benchmark preset
 python -m src.train.train_mask_model --experiment-preset librispeech_fast_benchmark --max-batches 30
-
-# Quality-oriented final VoiceBank preset
-python -m src.train.train_mask_model --experiment-preset voicebank_quality_final --max-batches 30
 
 # Experimental tuned weighted loss from stage 2
 python -m src.train.train_mask_model --loss-preset weighted_combined_tuned --max-batches 30 --epochs 1
@@ -52,13 +47,13 @@ python -m src.train.train_mask_model --model-variant balanced_res --optimizer-pr
 python -m src.train.train_mask_model --experiment-preset stage2_recommended --max-batches 30
 
 # Compare two checkpoints on the same evaluation subset
-python -m src.tools.project_cli compare-checkpoints -- --clean-dir data/voicebank_demand/test/clean --noisy-dir data/voicebank_demand/test/noisy --checkpoint baseline=checkpoints/baseline.pth --checkpoint stage2=checkpoints/stage2_recommended.pth --max-files 20
+python -m src.tools.project_cli compare-checkpoints -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test --checkpoint baseline=checkpoints/baseline.pth --checkpoint stage2=checkpoints/stage2_recommended.pth --max-files 20
 
 # Compare latest experiment directly against baseline checkpoint
-python -m src.tools.project_cli compare-latest -- --clean-dir data/voicebank_demand/test/clean --noisy-dir data/voicebank_demand/test/noisy --reference baseline=checkpoints/masknet_best.pth --max-files 20
+python -m src.tools.project_cli compare-latest -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test --reference baseline=checkpoints/masknet_best.pth --max-files 20
 
-# Aggregate final benchmark summaries
-python -m src.tools.project_cli summarize-benchmarks -- --experiment voicebank_baseline_official_smoke --experiment voicebank_quality_final_smoke --experiment librispeech_fast_benchmark_smoke --experiment librispeech_soft_vad_recommended_smoke
+# Aggregate final training summaries
+python -m src.tools.project_cli summarize-benchmarks -- --experiment librispeech_fast_benchmark_smoke --experiment librispeech_soft_vad_recommended_smoke
 
 # Build a delivery-ready artifact inventory
 python -m src.tools.project_cli project-inventory
@@ -95,8 +90,8 @@ python -m src.tools.project_cli compare-vad -- --split test --max-files 20
 
 ## Datasets
 
-- VoiceBank-DEMAND: 824 pairs train, 824 test
-- LibriSpeech + DEMAND: 2620 files x 3 SNR levels (0, 5, 10 dB)
+- LibriSpeech + DEMAND: training and validation for neural models, with clean/noise mixed on the fly
+- VoiceBank-DEMAND: fixed clean/noisy benchmark set for evaluation, comparisons, and plots
 - LibriSpeech/DEMAND preparation resamples clean speech and noise on the fly to 16 kHz when source files use a different sample rate.
 
 ## Results
@@ -145,9 +140,6 @@ Delivery notes and the recommended final artifacts are documented in `docs/DELIV
 # Recommended stage-2 preset
 python -m src.train.train_mask_model --experiment-preset stage2_recommended --max-batches 30
 
-# Official VoiceBank baseline preset
-python -m src.train.train_mask_model --experiment-preset voicebank_baseline_official --max-batches 30
-
 # LibriSpeech experiment with hard adaptive VAD labels
 python -m src.train.train_mask_model --dataset librispeech --use-vad-labels --vad-label-set adaptive_v1 --model-variant balanced_res --optimizer-preset adamw --preset onecycle_test --max-batches 30
 
@@ -160,9 +152,6 @@ python -m src.train.train_mask_model --experiment-preset librispeech_complex_mas
 
 # Fast LibriSpeech benchmark preset
 python -m src.train.train_mask_model --experiment-preset librispeech_fast_benchmark --max-batches 30
-
-# Quality-oriented final VoiceBank preset
-python -m src.train.train_mask_model --experiment-preset voicebank_quality_final --max-batches 30
 
 # Resume
 python -m src.train.train_mask_model --resume checkpoints/masknet_best.pth
@@ -195,16 +184,16 @@ Each training run now also writes:
 python -m src.eval.evaluate_vad_baseline
 python -m src.eval.compare_vad_label_sets --split test --max-files 20
 python -m src.eval.evaluate_all_methods
-python -m src.eval.summarize_benchmarks --experiment voicebank_baseline_official_smoke --experiment voicebank_quality_final_smoke --experiment librispeech_fast_benchmark_smoke --experiment librispeech_soft_vad_recommended_smoke
+python -m src.eval.summarize_benchmarks --experiment librispeech_fast_benchmark_smoke --experiment librispeech_soft_vad_recommended_smoke
 python demo.py --checkpoint checkpoints/masknet_best.pth
 
 # Unified CLI variants
 python -m src.tools.project_cli eval-vad
 python -m src.tools.project_cli compare-vad -- --split test --max-files 20
-python -m src.tools.project_cli eval-all -- --clean-dir data/voicebank_demand/test/clean --noisy-dir data/voicebank_demand/test/noisy
-python -m src.tools.project_cli compare-checkpoints -- --clean-dir data/voicebank_demand/test/clean --noisy-dir data/voicebank_demand/test/noisy --checkpoint baseline=checkpoints/baseline.pth --checkpoint stage2=checkpoints/stage2_recommended.pth --max-files 20
-python -m src.tools.project_cli compare-latest -- --clean-dir data/voicebank_demand/test/clean --noisy-dir data/voicebank_demand/test/noisy --reference baseline=checkpoints/masknet_best.pth --max-files 20
-python -m src.tools.project_cli summarize-benchmarks -- --experiment voicebank_baseline_official_smoke --experiment voicebank_quality_final_smoke --experiment librispeech_fast_benchmark_smoke --experiment librispeech_soft_vad_recommended_smoke
+python -m src.tools.project_cli eval-all -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test
+python -m src.tools.project_cli compare-checkpoints -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test --checkpoint baseline=checkpoints/baseline.pth --checkpoint stage2=checkpoints/stage2_recommended.pth --max-files 20
+python -m src.tools.project_cli compare-latest -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test --reference baseline=checkpoints/masknet_best.pth --max-files 20
+python -m src.tools.project_cli summarize-benchmarks -- --experiment librispeech_fast_benchmark_smoke --experiment librispeech_soft_vad_recommended_smoke
 python -m src.tools.project_cli demo -- --checkpoint checkpoints/masknet_best.pth
 python -m src.tools.project_cli realtime-demo -- --method masknet
 ```

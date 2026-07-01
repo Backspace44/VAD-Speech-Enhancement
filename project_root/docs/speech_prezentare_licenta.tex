@@ -1,0 +1,112 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{romanian}
+\setotherlanguage{english}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{setspace}
+\usepackage{parskip}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\onehalfspacing
+\setlength{\emergencystretch}{3em}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue
+}
+
+\title{\textbf{Speech prezentare licență}\\
+\large Voice Activity Detection \& Speech Enhancement}
+\author{Dumitrescu David-Vasile}
+\date{Iunie 2026}
+
+\begin{document}
+
+\maketitle
+
+\section*{Speech pentru prezentare}
+
+Bună ziua,
+
+Numele meu este \textbf{Dumitrescu David-Vasile}, iar în cadrul acestei prezentări voi descrie proiectul meu de licență, intitulat \textbf{Voice Activity Detection \& Speech Enhancement}. Proiectul urmărește construirea unui sistem complet pentru reducerea zgomotului din semnale vocale, combinând metode clasice de procesare digitală a semnalului cu modele neuronale de tip MaskNet.
+
+În continuare, voi parcurge cinci direcții principale: problema abordată și obiectivele proiectului, conceptele teoretice folosite, arhitectura sistemului și modelul MaskNet, interfața real-time, iar la final rezultatele experimentale, limitările și concluziile.
+
+\section*{Problema abordată și obiectivele proiectului}
+
+Problema de la care pornește proiectul este una foarte prezentă în aplicațiile reale: semnalul vocal este adesea afectat de zgomot ambiental. Acest lucru apare în conferințe online, sisteme de recunoaștere automată a vorbirii, asistenți vocali sau aplicații de analiză audio.
+
+Din punct de vedere matematic, putem modela semnalul observat ca suma dintre semnalul curat de vorbire și zgomot:
+\[
+    x[n] = s[n] + v[n].
+\]
+Aici, \(s[n]\) reprezintă semnalul curat de vorbire, \(v[n]\) reprezintă zgomotul, iar \(x[n]\) este semnalul observat. Scopul sistemului este să estimeze un semnal curat, notat cu \(\hat{s}[n]\), cât mai apropiat de semnalul real \(s[n]\).
+
+Obiectivul principal al proiectului a fost realizarea unui pipeline complet, nu doar a unui model izolat. Asta înseamnă că proiectul acoperă pregătirea datelor, generarea etichetelor VAD, antrenarea modelului, inferența, evaluarea prin metrici obiective și o interfață real-time pentru demonstrație.
+
+În plus, am inclus metode clasice de referință, precum Spectral Subtraction și Wiener Filter, pentru a putea compara rezultatele modelului neuronal cu soluții DSP tradiționale.
+
+\section*{Concepte teoretice}
+
+Pentru a putea procesa semnalul audio, am folosit reprezentarea STFT, adică Short-Time Fourier Transform. Vorbirea este un semnal nestaționar, deci nu este suficient să analizăm întregul semnal deodată. De aceea, semnalul este împărțit în cadre scurte, iar pentru fiecare cadru se calculează conținutul frecvențial.
+
+În implementarea proiectului, semnalele sunt procesate la 16 kHz, cu fereastră de 25 ms, hop de 10 ms și FFT de 512. După procesare, semnalul este reconstruit prin ISTFT.
+
+Modelul nu generează direct forma de undă, ci estimează o mască spectrală. Pentru varianta de magnitudine, am folosit Ideal Ratio Mask, care indică ce zone din spectrogramă trebuie păstrate și ce zone trebuie atenuate. Valorile apropiate de 1 păstrează componentele asociate vorbirii, iar valorile apropiate de 0 reduc zonele dominate de zgomot.
+
+Am inclus și varianta Complex MaskNet, unde modelul lucrează cu partea reală și imaginară a STFT-ului, permițând o corecție parțială a fazei.
+
+O altă componentă importantă este Voice Activity Detection. VAD-ul identifică zonele în care există vorbire și poate genera etichete hard sau soft. În proiect, acesta se bazează pe energie, Zero Crossing Rate și informație spectrală. Etichetele VAD sunt utile în antrenare, deoarece ajută modelul să trateze diferit zonele de liniște și zonele cu vorbire slabă.
+
+Pentru evaluare, am folosit metrici precum PESQ, STOI, SNR, segmental SNR și Log Spectral Distance. Aceste metrici permit o evaluare mai echilibrată, deoarece nu este suficient să măsurăm doar reducerea zgomotului; trebuie să urmărim și calitatea perceptuală, inteligibilitatea și apropierea spectrală față de semnalul curat.
+
+\section*{Arhitectura sistemului și modelul MaskNet}
+
+Din punct de vedere al implementării, proiectul este organizat modular. Modulul \texttt{data\_prep} se ocupă de date, validare și VAD. Modulul \texttt{dsp} conține STFT, ISTFT, metricile și metodele clasice. Modulul \texttt{models} definește MaskNet, iar \texttt{train} se ocupă de bucla de antrenare și checkpoint-uri.
+
+Separat, \texttt{eval} produce rapoarte și grafice, iar \texttt{tools} conține CLI-ul și demo-ul real-time. Această separare permite reutilizarea aceluiași pipeline în antrenare, evaluare și demonstrație.
+
+Pentru antrenare, am folosit LibriSpeech combinat cu zgomote din DEMAND. Mixarea se face on-the-fly, la valori SNR variabile între 0 și 20 dB. Evaluarea finală a fost realizată pe VoiceBank-DEMAND, un set standard folosit în probleme de speech enhancement.
+
+Fiecare experiment salvează configurația, istoricul și checkpoint-ul cel mai bun, ceea ce face procesul reproductibil.
+
+Modelul principal este varianta \texttt{balanced\_res}, bazată pe o arhitectură U-Net reziduală. Encoder-ul extrage reprezentări spectrale pe mai multe niveluri, iar decoder-ul reconstruiește masca la rezoluția inițială.
+
+Skip connections ajută la păstrarea detaliilor locale, blocurile reziduale stabilizează antrenarea, BiLSTM-ul modelează contextul temporal, iar mecanismul de attention ajustează importanța canalelor. Am inclus și variante mai mici pentru eficiență, respectiv variante complexe pentru îmbunătățirea reconstrucției.
+
+\section*{Interfața real-time}
+
+Pentru demonstrație, am construit o interfață real-time. Aceasta afișează forma de undă și spectrograma pentru semnalul brut și pentru semnalul procesat. Utilizatorul poate comuta între bypass, Spectral Subtraction, Wiener Filter și MaskNet.
+
+Interfața include și controale pentru VAD, SNR, dry/wet, gain, scenarii de zgomot, snapshot și recording. Rolul ei este dublu: demonstrație vizuală și auditivă, dar și instrument de diagnostic.
+
+Fluxul real-time folosește un stream audio full-duplex. Callback-ul audio este păstrat cât mai simplu: primește blocuri audio, le pune într-o coadă de intrare și redă cel mai recent bloc procesat. Procesarea efectivă, adică STFT, inferența și reconstrucția, este mutată într-un thread separat. Astfel, sistemul încearcă să mențină latența redusă.
+
+Scenariile \texttt{neutral}, \texttt{office}, \texttt{street} și \texttt{hard} permit testarea comportamentului sistemului în condiții diferite de zgomot.
+
+\section*{Rezultate experimentale}
+
+Rezultatele cantitative arată că MaskNet obține cele mai bune valori globale. Pe VoiceBank-DEMAND, semnalul zgomotos are PESQ 1.972 și SNR 8.447 dB. MaskNet ajunge la PESQ 2.564 și SNR 15.328 dB.
+
+De asemenea, LSD scade de la 13.923 la 9.502, ceea ce indică o apropiere spectrală mai bună față de semnalul curat. Față de semnalul zgomotos, MaskNet aduce o îmbunătățire de +0.592 PESQ și +6.882 dB SNR.
+
+Totuși, rezultatele nu trebuie interpretate doar numeric. De aceea, am analizat și exemple audio și spectrograme. În cazurile cu SNR scăzut, se observă că metodele clasice reduc o parte din zgomot, dar pot introduce artefacte sau pot lăsa zgomot rezidual.
+
+MaskNet reușește să păstreze mai bine structura vorbirii și să reducă energia difuză dintre armonici. Există totuși limitări: estimarea fazei rămâne dificilă, inferența real-time are cost computațional, iar performanța depinde de diversitatea datelor de antrenare.
+
+\section*{Concluzii}
+
+În concluzie, proiectul realizează un sistem complet de Speech Enhancement, care combină procesarea digitală a semnalului, rețele neuronale MaskNet, VAD, evaluare obiectivă și demonstrație real-time.
+
+Contribuția principală nu este doar modelul, ci integrarea tuturor acestor componente într-un pipeline coerent, reproductibil și demonstrabil.
+
+Direcțiile viitoare includ optimizarea pentru real-time, export ONNX, antrenare pe date mai diverse, funcții de pierdere perceptuale și evaluare subiectivă cu ascultători umani.
+
+Vă mulțumesc pentru atenție. În continuare, pot răspunde la întrebări sau pot prezenta demonstrația real-time.
+
+\end{document}

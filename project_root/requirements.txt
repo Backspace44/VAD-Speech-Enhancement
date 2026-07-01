@@ -8,6 +8,7 @@ librosa>=0.10.0  # Audio analysis and visualization (used in test_preprocessing.
 
 # retea neurala
 torch>=2.0
+torchcodec>=0.7
 
 # metrici de inteligibilitate/calitate (optionale, dar folosite in cod)
 pystoi>=0.3.3

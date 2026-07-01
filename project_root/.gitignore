@@ -31,6 +31,7 @@ results/
 data/
 checkpoints/
 *.zip
+*.pdf
 
 # OS
 .DS_Store

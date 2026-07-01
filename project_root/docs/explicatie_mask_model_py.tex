@@ -1,0 +1,380 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{romanian}
+\usepackage[margin=2.25cm]{geometry}
+\usepackage{setspace}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[
+    colorlinks,
+    linkcolor={black},
+    citecolor={black},
+    urlcolor={blue}
+]{hyperref}
+
+\onehalfspacing
+\setlength{\emergencystretch}{3em}
+\setlength{\parskip}{0.15em}
+\setlist{nosep,leftmargin=*}
+
+\definecolor{codebackground}{rgb}{0.96,0.96,0.96}
+\definecolor{codecomment}{rgb}{0.23,0.45,0.30}
+\definecolor{codekeyword}{rgb}{0.10,0.20,0.55}
+\definecolor{codestring}{rgb}{0.55,0.15,0.15}
+
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{codebackground},
+    basicstyle=\ttfamily\scriptsize,
+    breaklines=true,
+    frame=single,
+    columns=fullflexible,
+    keepspaces=true,
+    showstringspaces=false,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{codekeyword}\bfseries,
+    commentstyle=\color{codecomment},
+    stringstyle=\color{codestring},
+    tabsize=4
+}
+\lstset{style=codestyle}
+
+\newcommand{\codechunk}[2]{%
+\subsection*{Liniile #1--#2}
+\lstinputlisting[language=Python,firstline=#1,lastline=#2,firstnumber=#1]{../src/models/mask_model.py}
+}
+
+\title{Explicarea fisierului \texttt{mask\_model.py}}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\clearpage
+
+\chapter{Rolul fisierului \texttt{mask\_model.py}}
+
+Fisierul \path{src/models/mask_model.py} defineste arhitectura neuronala principala
+a proiectului: MaskNet. Modelul este proiectat pentru imbunatatirea semnalului
+de vorbire prin estimarea unei masti spectrale. Intrarea este de obicei o
+spectrograma de magnitudine cu forma:
+
+\[
+x \in \mathbb{R}^{B \times C \times F \times T},
+\]
+
+unde \(B\) este batch size-ul, \(C\) numarul de canale, \(F\) numarul de bin-uri
+de frecventa, iar \(T\) numarul de cadre temporale. Pentru modelul de magnitudine,
+\(C=1\). Pentru varianta complexa, \(C=2\), deoarece intrarea contine partea
+reala si partea imaginara a STFT.
+
+Modelul foloseste o arhitectura de tip U-Net: encoderul reduce rezolutia
+timp-frecventa si creste numarul de canale, bottleneck-ul extrage reprezentari
+compacte, iar decoderul reconstruieste o masca la rezolutia initiala. Skip
+connections pastreaza detalii locale, attention-ul poate repondera canalele, iar
+BiLSTM-ul modeleaza dependente temporale.
+
+\begin{longtable}{p{0.30\textwidth}p{0.60\textwidth}}
+\toprule
+\textbf{Clasa} & \textbf{Rol} \\
+\midrule
+\endhead
+\texttt{ConvBlock} & Convolutie 2D, BatchNorm si ReLU. Bloc de baza pentru encoder
+si decoder. \\
+\texttt{DepthwiseSeparableConvBlock} & Varianta mai eficienta, separand convolutia
+spatiala de proiectia pe canale. \\
+\texttt{ResidualConvBlock} & Doua blocuri convolutionale cu conexiune reziduala. \\
+\texttt{EncoderBlock} & Doua convolutii si optional downsampling prin MaxPool. \\
+\texttt{DecoderBlock} & Upsampling, concatenare cu skip connection si convolutii. \\
+\texttt{AttentionBlock} & Mecanism de channel attention. \\
+\texttt{BiLSTMBlock} & Modeleaza dependente temporale in bottleneck. \\
+\texttt{MaskNet} & Reteaua completa U-Net + optional LSTM + optional attention. \\
+\texttt{SimpleMaskNet} & Varianta veche, pastrata pentru compatibilitate. \\
+\bottomrule
+\end{longtable}
+
+\chapter{Importuri si blocul convolutional simplu}
+
+\codechunk{1}{16}
+
+\begin{description}
+    \item[Liniile 1--3.] Importa PyTorch, modulul \texttt{torch.nn} si functiile
+    neuronale din \texttt{torch.nn.functional}. \texttt{nn} este folosit pentru
+    definirea layerelor, iar \texttt{F} pentru operatii functionale precum
+    padding-ul sau ReLU in modelul simplu.
+
+    \item[Liniile 6--7.] Defineste clasa \texttt{ConvBlock}, mostenind
+    \texttt{nn.Module}. Acesta este blocul standard al arhitecturii: convolutie,
+    normalizare si activare.
+
+    \item[Liniile 8--13.] Constructorul primeste numarul de canale de intrare,
+    canale de iesire, dimensiunea kernelului si stride-ul. Padding-ul este calculat
+    ca \texttt{kernel\_size // 2}, ceea ce pastreaza dimensiunea spatiala cand
+    stride-ul este 1. Blocul contine \texttt{Conv2d}, \texttt{BatchNorm2d} si
+    \texttt{ReLU}.
+
+    \item[Liniile 15--16.] \texttt{forward} aplica layer-ele in ordinea:
+    convolutie, batch normalization, ReLU. Iesirea are activare neliniara si poate
+    fi trimisa catre urmatorul bloc.
+\end{description}
+
+\chapter{Convolutie depthwise separabila}
+
+\codechunk{19}{43}
+
+\begin{description}
+    \item[Liniile 19--20.] \texttt{DepthwiseSeparableConvBlock} este o alternativa
+    mai eficienta la \texttt{ConvBlock}. Ideea este sa se separe filtrarea spatiala
+    de combinarea canalelor.
+
+    \item[Liniile 22--35.] Prima convolutie este \texttt{depthwise}: are
+    \texttt{groups=in\_channels}, ceea ce inseamna ca fiecare canal este filtrat
+    separat. Apoi \texttt{pointwise} foloseste kernel \(1 \times 1\) pentru a
+    combina canalele si a produce \texttt{out\_channels}.
+
+    \item[Liniile 36--37.] Sunt definite BatchNorm-urile si ReLU-ul comun. BatchNorm
+    stabilizeaza distributia activarilor, iar ReLU introduce neliniaritate.
+
+    \item[Liniile 39--43.] In \texttt{forward}, semnalul trece intai prin convolutia
+    depthwise, apoi prin convolutia pointwise. Aceasta varianta poate reduce
+    numarul de parametri si costul computational, util pentru rulari rapide sau
+    real-time.
+\end{description}
+
+\chapter{Bloc rezidual}
+
+\codechunk{46}{72}
+
+\begin{description}
+    \item[Liniile 46--47.] \texttt{ResidualConvBlock} defineste un bloc cu doua
+    straturi convolutionale si o conexiune reziduala. Conexiunea reziduala ajuta
+    propagarea gradientului si permite modelului sa invete corectii fata de intrare.
+
+    \item[Liniile 48--59.] Constructorul alege tipul de bloc intern: depthwise sau
+    clasic. Sunt create doua convolutii succesive si o activare ReLU.
+
+    \item[Liniile 60--65.] Daca numarul canalelor de intrare difera de cel al
+    canalelor de iesire, reziduul nu poate fi adunat direct. De aceea se creeaza
+    \texttt{self.proj}, o proiectie \(1 \times 1\) urmata de BatchNorm, care
+    aliniaza dimensiunile.
+
+    \item[Liniile 67--72.] In \texttt{forward}, se salveaza reziduul, se aplica
+    cele doua convolutii, apoi se aduna iesirea cu reziduul. ReLU-ul final produce
+    activarea blocului.
+\end{description}
+
+\chapter{Encoderul U-Net}
+
+\codechunk{75}{107}
+
+\begin{description}
+    \item[Liniile 75--76.] \texttt{EncoderBlock} este blocul de coborare al U-Net-ului.
+    El extrage trasaturi si, optional, reduce rezolutia timp-frecventa.
+
+    \item[Liniile 77--91.] Constructorul primeste canalele, flag-ul de downsampling
+    si optiunile rezidual/depthwise. Daca \texttt{use\_residual=True}, foloseste
+    un \texttt{ResidualConvBlock}; altfel foloseste doua blocuri convolutionale
+    simple sau depthwise.
+
+    \item[Liniile 92--94.] Daca downsampling-ul este activ, se creeaza un
+    \texttt{MaxPool2d} cu kernel si stride 2. Aceasta injumatateste frecventa si
+    timpul in reprezentarea intermediara.
+
+    \item[Liniile 96--107.] \texttt{forward} produce doua iesiri: tensorul dupa
+    pooling si tensorul \texttt{before\_pool}. Al doilea este skip connection-ul
+    care va fi transmis decoderului pentru a recupera detalii fine.
+\end{description}
+
+\chapter{Decoderul U-Net}
+
+\codechunk{110}{147}
+
+\begin{description}
+    \item[Liniile 110--111.] \texttt{DecoderBlock} este blocul de urcare al U-Net-ului.
+    El mareste rezolutia si concateneaza informatia cu skip connection-ul din encoder.
+
+    \item[Liniile 112--124.] Constructorul creeaza un \texttt{ConvTranspose2d}
+    pentru upsampling. Apoi alege intre bloc rezidual si doua blocuri convolutionale
+    standard. Dupa concatenare, numarul de canale devine dublu, deci primul bloc
+    primeste \texttt{out\_channels * 2}.
+
+    \item[Liniile 126--136.] \texttt{forward} aplica upsampling. Daca forma tensorului
+    upsampled nu coincide perfect cu skip connection-ul, se calculeaza diferentele
+    pe inaltime/frecventa si latime/timp, apoi se aplica \texttt{F.pad}. Aceasta
+    trateaza diferentele cauzate de impartiri si rotunjiri la downsampling.
+
+    \item[Liniile 138--147.] Tensorul upsampled este concatenat cu skip-ul pe
+    dimensiunea canalelor. Apoi trece prin blocul rezidual sau prin doua convolutii.
+    Rezultatul devine intrarea pentru urmatorul nivel de decoder.
+\end{description}
+
+\chapter{Channel Attention}
+
+\codechunk{150}{168}
+
+\begin{description}
+    \item[Liniile 150--151.] \texttt{AttentionBlock} implementeaza un mecanism de
+    attention pe canale, similar conceptual cu Squeeze-and-Excitation.
+
+    \item[Liniile 152--161.] Constructorul creeaza un \texttt{AdaptiveAvgPool2d(1)},
+    care reduce fiecare canal la o singura valoare medie. Apoi o retea fully
+    connected mica reduce dimensiunea canalelor, aplica ReLU, revine la numarul
+    original de canale si foloseste sigmoid pentru ponderi intre 0 si 1.
+
+    \item[Liniile 163--168.] In \texttt{forward}, tensorul este redus la vectorul
+    \((B, C)\), trecut prin reteaua FC si remodelat la \((B,C,1,1)\). Iesirea
+    este produsul dintre tensorul original si ponderile de attention extinse.
+    Astfel, canalele utile pot fi amplificate, iar cele mai putin relevante pot
+    fi diminuate.
+\end{description}
+
+\chapter{Blocul BiLSTM}
+
+\codechunk{171}{200}
+
+\begin{description}
+    \item[Liniile 171--172.] \texttt{BiLSTMBlock} adauga modelare temporala in
+    bottleneck. Convolutiile observa vecinatati locale, iar LSTM-ul poate urmari
+    dependente pe axa timpului.
+
+    \item[Liniile 173--183.] Constructorul creeaza un LSTM bidirectional cu
+    \texttt{batch\_first=True}. Dimensiunea de intrare este data de canalele si
+    frecventele comprimate, iar dimensiunea ascunsa este \texttt{hidden\_size}.
+    Pentru ca LSTM-ul este bidirectional, iesirea are dimensiune dubla si este
+    proiectata inapoi prin \texttt{self.linear}.
+
+    \item[Liniile 186--194.] In \texttt{forward}, tensorul are forma
+    \((B,C,F,T)\). Este permutat la \((B,T,C,F)\), apoi aplatizat la
+    \((B,T,C\cdot F)\), deoarece LSTM-ul trebuie sa primeasca o secventa temporala.
+
+    \item[Liniile 196--200.] LSTM-ul proceseaza secventa, linearul readuce dimensiunea
+    la cea originala, apoi tensorul este remodelat si permutat inapoi la forma
+    \((B,C,F,T)\).
+\end{description}
+
+\chapter{Clasa MaskNet: constructorul}
+
+\codechunk{204}{252}
+
+\begin{description}
+    \item[Liniile 204--219.] Docstring-ul descrie arhitectura MaskNet: U-Net cu
+    skip connections, attention optional si BiLSTM optional. Argumentele principale
+    controleaza canalele de intrare, dimensiunea bazei si componentele activate.
+
+    \item[Liniile 220--236.] Constructorul primeste toate optiunile necesare:
+    \texttt{in\_channels}, \texttt{base\_channels}, \texttt{use\_lstm},
+    \texttt{use\_attention}, \texttt{use\_residual}, \texttt{use\_depthwise},
+    numarul bin-urilor de frecventa, canalele de iesire si tipul mastii.
+
+    \item[Liniile 237--248.] Salveaza configuratia ca atribute ale obiectului.
+    Aceste atribute sunt folosite ulterior in \texttt{forward} si in activarea de
+    iesire.
+
+    \item[Liniile 250--252.] Alege clasa de bloc convolutional de baza:
+    \texttt{DepthwiseSeparableConvBlock} daca \texttt{use\_depthwise=True}, altfel
+    \texttt{ConvBlock}.
+\end{description}
+
+\codechunk{255}{303}
+
+\begin{description}
+    \item[Liniile 255--258.] Creeaza cele patru niveluri de encoder. Canalele cresc
+    progresiv: \(C\), \(2C\), \(4C\), \(8C\), unde \(C=\texttt{base\_channels}\).
+    Fiecare nivel reduce rezolutia prin pooling.
+
+    \item[Liniile 261--271.] Creeaza bottleneck-ul. Daca modelul este rezidual,
+    foloseste doua blocuri reziduale. Altfel, foloseste doua blocuri convolutionale.
+    Numarul de canale urca pana la \(16C\).
+
+    \item[Liniile 274--278.] Daca LSTM-ul este activ, se calculeaza dimensiunea
+    frecventei dupa patru downsampling-uri. Pentru 257 bin-uri, impartirea intreaga
+    la 16 da dimensiunea folosita la LSTM. Intrarea LSTM-ului este
+    \(16C \cdot F_{\text{down}}\).
+
+    \item[Liniile 281--286.] Daca attention-ul este activ, se creeaza cate un
+    \texttt{AttentionBlock} pentru fiecare skip connection.
+
+    \item[Liniile 289--292.] Creeaza cele patru niveluri de decoder. Acestea inverseaza
+    procesul encoderului: \(16C \rightarrow 8C \rightarrow 4C \rightarrow 2C
+    \rightarrow C\).
+
+    \item[Liniile 295--303.] \texttt{out\_conv} transforma canalele finale in
+    \texttt{output\_channels}. Ultima convolutie \(1 \times 1\) produce masca
+    spectrala: un canal pentru masca de magnitudine sau doua canale pentru masca
+    complexa.
+\end{description}
+
+\chapter{Activarea de iesire si forward-ul MaskNet}
+
+\codechunk{305}{356}
+
+\begin{description}
+    \item[Liniile 305--312.] \texttt{\_apply\_output\_activation} aplica activarea
+    finala. \texttt{sigmoid} limiteaza masca la intervalul \([0,1]\), potrivit
+    pentru masti de magnitudine. \texttt{tanh} inmultit cu \texttt{output\_scale}
+    este potrivit pentru masti complexe, unde valorile pot fi negative sau mai
+    mari decat 1. Optiunile \texttt{identity}/\texttt{linear} lasa iesirea neschimbata.
+
+    \item[Liniile 314--324.] Docstring-ul \texttt{forward} fixeaza forma intrarii:
+    \((batch, channels, freq, time)\). Iesirea este o masca la aceeasi rezolutie
+    timp-frecventa.
+
+    \item[Liniile 326--329.] Intrarea trece prin cele patru niveluri de encoder.
+    La fiecare nivel se pastreaza si skip connection-ul.
+
+    \item[Liniile 332--335.] Tensorul cel mai comprimat trece prin bottleneck si,
+    daca este activ, prin BiLSTM.
+
+    \item[Liniile 338--342.] Daca attention-ul este activ, skip connection-urile
+    sunt reponderate pe canale inainte de a fi folosite de decoder.
+
+    \item[Liniile 344--347.] Decoderul reconstruieste rezolutia initiala, folosind
+    skip connection-urile in ordine inversa.
+
+    \item[Liniile 350--356.] \texttt{out\_conv} produce masca, iar activarea finala
+    o transforma in forma potrivita tipului de model.
+\end{description}
+
+\chapter{SimpleMaskNet}
+
+\codechunk{360}{383}
+
+\begin{description}
+    \item[Liniile 360--361.] \texttt{SimpleMaskNet} este o arhitectura mai veche,
+    pastrata pentru compatibilitate. Ea nu are U-Net, skip connections, LSTM sau
+    attention.
+
+    \item[Liniile 362--372.] Constructorul defineste trei convolutii cu BatchNorm
+    si o convolutie finala \(1 \times 1\), urmata de sigmoid.
+
+    \item[Liniile 374--383.] \texttt{forward} aplica secvential cele trei blocuri
+    convolutionale cu ReLU, produce masca prin \texttt{out\_conv} si o limiteaza
+    cu sigmoid. Aceasta varianta este mai simpla si mai rapida, dar are capacitate
+    expresiva mai mica decat MaskNet-ul complet.
+\end{description}
+
+\chapter{Concluzie}
+
+\texttt{mask\_model.py} este fisierul care defineste nucleul neuronal al
+proiectului. Configuratia din \texttt{config.py} decide ce varianta de model se
+construieste, iar acest fisier contine clasele efective care transforma
+spectrograma zgomotoasa intr-o masca spectrala.
+
+Arhitectura MaskNet este flexibila: poate functiona ca model de magnitudine,
+poate folosi masti complexe, poate activa LSTM pentru context temporal, attention
+pentru reponderarea canalelor, blocuri reziduale pentru propagarea gradientului
+si convolutii depthwise pentru eficienta. Aceasta flexibilitate permite proiectului
+sa compare modele rapide cu modele mai expresive, pastrand aceeasi interfata de
+training si inferenta.
+
+\end{document}

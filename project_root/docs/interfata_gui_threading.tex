@@ -1,0 +1,544 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[romanian]{babel}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\geometry{margin=2.5cm}
+
+\definecolor{codebackground}{rgb}{0.95,0.95,0.95}
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{codebackground},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    keepspaces=true,
+    showstringspaces=false,
+    tabsize=2
+}
+\lstset{style=codestyle}
+
+\title{Interfata grafica realtime: threading, concurenta si afisare}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introducere}
+
+Interfata grafica realtime a proiectului de Speech Enhancement are rolul de a
+demonstra vizual si auditiv functionarea sistemului de reducere a zgomotului.
+Aceasta permite captarea semnalului audio de la microfon, procesarea lui prin
+metode clasice DSP sau prin modelul neuronal MaskNet, redarea semnalului
+imbunatatit catre difuzoare si afisarea in timp real a formelor de unda,
+spectrogramelor, nivelurilor audio si scorurilor VAD.
+
+Spre deosebire de un demo offline, interfata realtime trebuie sa execute simultan
+mai multe activitati:
+
+\begin{itemize}
+    \item citirea continua a semnalului audio de la dispozitivul de intrare;
+    \item procesarea fiecarui bloc audio cu latenta mica;
+    \item redarea semnalului procesat catre dispozitivul de iesire;
+    \item actualizarea grafica a ferestrei;
+    \item preluarea comenzilor utilizatorului;
+    \item salvarea optionala a inregistrarilor si snapshot-urilor.
+\end{itemize}
+
+Pentru a gestiona aceste activitati fara blocaje, proiectul foloseste un model
+concurent bazat pe callback audio, thread separat de procesare, cozi pentru
+comunicarea intre componente si mecanisme de sincronizare pentru datele partajate.
+
+\section{Modulele implicate}
+
+Interfata realtime este implementata modular, astfel incat partea grafica,
+streaming-ul audio si logica de procesare sa fie separate.
+
+\begin{longtable}{p{0.32\textwidth}p{0.60\textwidth}}
+\toprule
+\textbf{Modul} & \textbf{Rol} \\
+\midrule
+\endhead
+\texttt{src/tools/realtime\_demo.py} &
+Punctul de intrare al aplicatiei realtime. Parseaza argumentele CLI, alege
+checkpoint-ul, configureaza dispozitivele, creeaza motorul audio si porneste
+aplicatia. \\
+\addlinespace
+\texttt{src/tools/realtime/engine.py} &
+Contine clasele \texttt{RealtimeDenoiseApp} si \texttt{StreamingEnhancer}.
+Gestioneaza stream-ul audio, thread-ul de procesare, cozile interne si aplicarea
+metodelor de denoising. \\
+\addlinespace
+\texttt{src/tools/realtime/ui.py} &
+Contine clasa \texttt{LiveComparisonUI}, responsabila pentru fereastra Tkinter,
+controalele interactive, graficele Matplotlib si actualizarea vizuala live. \\
+\addlinespace
+\texttt{src/tools/realtime/common.py} &
+Contine functii si clase comune: alegerea dispozitivelor audio, conversii
+milisecunde-esantioane, normalizare, calcul RMS, inregistrare audio si sursa
+sintetica \texttt{speech+noise}. \\
+\addlinespace
+\texttt{src/models/inference.py} &
+Contine functiile pentru incarcarea checkpoint-ului MaskNet si aplicarea
+modelului asupra unui semnal audio. \\
+\bottomrule
+\end{longtable}
+
+Aceasta structura permite rularea aceluiasi motor realtime atat cu interfata
+grafica, prin \texttt{--visualize}, cat si fara interfata, doar cu loguri in
+consola.
+
+\section{Tehnologii folosite pentru concurenta}
+
+\subsection{Callback audio prin sounddevice}
+
+Fluxul audio realtime este gestionat cu biblioteca \texttt{sounddevice}. Aceasta
+deschide un stream audio full-duplex, cu un canal de intrare si un canal de
+iesire. Stream-ul apeleaza periodic un callback, care primeste un bloc audio nou
+si trebuie sa furnizeze rapid un bloc audio pentru iesire.
+
+In proiect, stream-ul este creat cu parametri precum sample rate, dimensiunea
+blocului, latenta si dispozitivele active:
+
+\begin{lstlisting}[language=Python]
+with sd.Stream(
+    samplerate=self.sample_rate,
+    blocksize=self.block_size,
+    dtype="float32",
+    channels=1,
+    latency=self.latency,
+    device=device,
+    callback=self._audio_callback,
+):
+    ...
+\end{lstlisting}
+
+Callback-ul audio este o zona sensibila a aplicatiei. El este apelat foarte des
+si nu trebuie sa execute operatii costisitoare, deoarece orice intarziere poate
+produce intreruperi audio, dropout-uri sau latenta mare. Din acest motiv,
+callback-ul nu ruleaza direct MaskNet si nu face actualizari grafice complexe.
+El doar preia intrarea, gestioneaza cozile si trimite la iesire cel mai recent
+bloc procesat disponibil.
+
+\subsection{Thread separat pentru procesare}
+
+Procesarea audio este mutata intr-un thread separat, creat cu modulul standard
+\texttt{threading}:
+
+\begin{lstlisting}[language=Python]
+self.processor_thread = threading.Thread(
+    target=self._processor_loop,
+    daemon=True
+)
+\end{lstlisting}
+
+Acest thread ruleaza metoda \texttt{\_processor\_loop}. Rolul lui este sa consume
+blocuri audio din coada de intrare, sa aplice metoda de imbunatatire si sa puna
+rezultatul in coada de iesire. Astfel, callback-ul audio ramane rapid, iar
+operatiile mai lente sunt executate in afara callback-ului.
+
+Separarea este importanta mai ales pentru metoda \texttt{masknet}, unde
+procesarea include calcul STFT, inferenta PyTorch si reconstructie prin iSTFT.
+Aceste operatii pot dura mai mult decat procesarea clasica DSP si nu trebuie
+executate direct in callback-ul stream-ului audio.
+
+\subsection{Model producer-consumer cu queue.Queue}
+
+Comunicarea intre callback-ul audio si thread-ul de procesare se face prin
+\texttt{queue.Queue}. Proiectul foloseste doua cozi:
+
+\begin{itemize}
+    \item \texttt{input\_queue}, pentru blocurile audio captate;
+    \item \texttt{output\_queue}, pentru blocurile audio procesate.
+\end{itemize}
+
+Acest mecanism creeaza un model de tip producer-consumer:
+
+\begin{itemize}
+    \item callback-ul audio produce blocuri de intrare si le pune in
+    \texttt{input\_queue};
+    \item thread-ul de procesare consuma blocuri din \texttt{input\_queue};
+    \item thread-ul de procesare produce blocuri imbunatatite si le pune in
+    \texttt{output\_queue};
+    \item callback-ul audio consuma blocuri din \texttt{output\_queue} si le
+    trimite catre difuzoare.
+\end{itemize}
+
+In forma simplificata, fluxul este:
+
+\begin{lstlisting}[language=Python]
+# callback audio
+self.input_queue.put_nowait(input_block)
+output_block = self.output_queue.get_nowait()
+
+# thread de procesare
+block = self.input_queue.get(timeout=0.1)
+enhanced = self.enhancer.process_block(block)
+self.output_queue.put_nowait(enhanced)
+\end{lstlisting}
+
+Coada are dimensiune limitata, configurata prin \texttt{--queue-size}. Daca o
+coada se umple, sistemul elimina blocuri vechi sau ignora temporar unele blocuri.
+Aceasta alegere favorizeaza continuitatea stream-ului audio in locul acumularii
+unei intarzieri din ce in ce mai mari.
+
+\subsection{Oprire controlata cu threading.Event}
+
+Pentru oprirea aplicatiei se foloseste \texttt{threading.Event}. Obiectul
+\texttt{stop\_event} este verificat atat in bucla principala, cat si in thread-ul
+de procesare:
+
+\begin{lstlisting}[language=Python]
+while not self.stop_event.is_set():
+    ...
+\end{lstlisting}
+
+Cand utilizatorul inchide fereastra, apasa butonul \texttt{Stop Demo} sau
+intrerupe executia cu \texttt{Ctrl+C}, evenimentul este setat. Aplicatia opreste
+stream-ul audio, asteapta inchiderea thread-ului de procesare si elibereaza
+resursele:
+
+\begin{lstlisting}[language=Python]
+self.stop_event.set()
+self.processor_thread.join(timeout=2.0)
+\end{lstlisting}
+
+Aceasta abordare evita oprirea brusca a thread-urilor si permite salvarea
+inregistrarilor audio la finalul sesiunii.
+
+\subsection{Sincronizarea datelor cu threading.Lock}
+
+Interfata grafica si callback-ul audio folosesc aceleasi buffere pentru afisarea
+semnalului brut si a semnalului imbunatatit. Pentru a evita citirea unor date
+modificate partial, clasa \texttt{LiveComparisonUI} foloseste
+\texttt{threading.Lock}.
+
+Metoda \texttt{push} actualizeaza bufferele intr-o zona protejata:
+
+\begin{lstlisting}[language=Python]
+with self.lock:
+    self.raw_buffer = np.roll(self.raw_buffer, -len(raw_block))
+    self.raw_buffer[-len(raw_block):] = raw_block
+    self.output_buffer = np.roll(self.output_buffer, -len(output_block))
+    self.output_buffer[-len(output_block):] = output_block
+\end{lstlisting}
+
+Metoda \texttt{refresh} citeste copii ale acestor buffere tot intr-o zona
+protejata:
+
+\begin{lstlisting}[language=Python]
+with self.lock:
+    raw = self.raw_buffer.copy()
+    out = self.output_buffer.copy()
+\end{lstlisting}
+
+Astfel, UI-ul nu afiseaza date inconsistente, iar callback-ul audio poate continua
+sa transmita blocuri noi.
+
+\section{Pipeline-ul concurent de rulare}
+
+Pipeline-ul realtime poate fi descris in pasi succesivi:
+
+\begin{enumerate}
+    \item Utilizatorul porneste aplicatia prin CLI:
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli realtime-demo -- --method masknet --visualize
+\end{lstlisting}
+
+    \item Modulul \texttt{realtime\_demo.py} citeste argumentele si configureaza
+    metoda de denoising, checkpoint-ul, sample rate-ul, dimensiunea blocului,
+    dispozitivele audio si optiunile de vizualizare.
+
+    \item Se creeaza obiectul \texttt{StreamingEnhancer}, care pastreaza un
+    buffer de context si aplica metoda selectata: \texttt{masknet},
+    \texttt{spectral\_subtraction}, \texttt{wiener} sau \texttt{bypass}.
+
+    \item Daca este activata optiunea \texttt{--visualize}, se creeaza fereastra
+    \texttt{LiveComparisonUI}.
+
+    \item Se creeaza obiectul \texttt{RealtimeDenoiseApp}, care coordoneaza
+    stream-ul audio, thread-ul de procesare, cozile si comunicarea cu UI-ul.
+
+    \item La pornire, motorul face un \texttt{warmup} al procesarii pentru a
+    reduce latenta primului bloc.
+
+    \item Este pornit thread-ul de procesare.
+
+    \item Se deschide stream-ul audio \texttt{sounddevice}.
+
+    \item La fiecare callback, aplicatia primeste un bloc audio de intrare.
+
+    \item Blocul de intrare este pus in \texttt{input\_queue}.
+
+    \item Callback-ul incearca sa citeasca un bloc procesat din
+    \texttt{output\_queue}. Daca nu exista bloc disponibil, trimite temporar
+    liniste la iesire.
+
+    \item Thread-ul de procesare preia blocul din \texttt{input\_queue}, aplica
+    denoising si pune rezultatul in \texttt{output\_queue}.
+
+    \item UI-ul primeste blocurile raw si enhanced prin metoda \texttt{push}.
+
+    \item Bucla principala consuma periodic comenzile utilizatorului din UI:
+    schimbarea metodei, schimbarea VAD-ului, schimbarea sursei, modificarea
+    SNR-ului, snapshot, recording sau oprire.
+
+    \item Metoda \texttt{refresh} actualizeaza graficele si starea vizuala a
+    aplicatiei.
+\end{enumerate}
+
+\section{Tehnologii folosite pentru afisarea GUI}
+
+\subsection{Tkinter}
+
+Interfata grafica este construita cu \texttt{Tkinter}, toolkit-ul grafic standard
+din Python. Fereastra principala este creata in clasa \texttt{LiveComparisonUI}:
+
+\begin{lstlisting}[language=Python]
+self.root = tk.Tk()
+self.root.title("Realtime Speech Enhancement Monitor")
+self.root.geometry("1500x980")
+\end{lstlisting}
+
+Tkinter este potrivit pentru acest proiect deoarece este simplu de distribuit,
+nu necesita un framework web si permite construirea rapida a unei interfete
+desktop cu controale native.
+
+\subsection{ttk pentru widget-uri moderne}
+
+Peste Tkinter este folosit modulul \texttt{ttk}, care ofera widget-uri cu aspect
+mai modern si suport pentru stilizare. Interfata foloseste:
+
+\begin{itemize}
+    \item \texttt{ttk.Frame} pentru panouri principale;
+    \item \texttt{ttk.LabelFrame} pentru sectiuni grupate;
+    \item \texttt{ttk.Notebook} pentru taburi;
+    \item \texttt{ttk.Combobox} pentru selectii;
+    \item \texttt{ttk.Scale} pentru slidere;
+    \item \texttt{ttk.Progressbar} pentru niveluri audio;
+    \item \texttt{ttk.Button} pentru actiuni precum snapshot, recording si stop.
+\end{itemize}
+
+In cod sunt definite stiluri personalizate pentru panouri, butoane, etichete si
+bare de progres:
+
+\begin{lstlisting}[language=Python]
+style.configure("Card.TFrame", background="#fffdf8")
+style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"))
+style.configure("Slim.Horizontal.TProgressbar", thickness=10)
+\end{lstlisting}
+
+\subsection{Structura ferestrei}
+
+Fereastra este impartita in doua zone:
+
+\begin{itemize}
+    \item zona din stanga, pentru monitorizare vizuala;
+    \item zona din dreapta, pentru controale interactive.
+\end{itemize}
+
+Zona de monitorizare afiseaza:
+
+\begin{itemize}
+    \item sumarul sesiunii;
+    \item forma de unda a semnalului brut;
+    \item forma de unda a semnalului imbunatatit;
+    \item spectrograma semnalului brut;
+    \item spectrograma semnalului imbunatatit;
+    \item nivelurile RMS;
+    \item increderea VAD.
+\end{itemize}
+
+Zona de control foloseste un \texttt{ttk.Notebook} cu patru taburi:
+
+\begin{itemize}
+    \item \textbf{Audio}, pentru sursa audio si dispozitive;
+    \item \textbf{Processing}, pentru metoda de denoising, VAD, dry/wet si gain;
+    \item \textbf{Files}, pentru incarcarea fisierelor speech/noise;
+    \item \textbf{Augment}, pentru scenarii, SNR si distorsiuni.
+\end{itemize}
+
+\section{Afisarea graficelor cu Matplotlib}
+
+\subsection{Integrarea Matplotlib in Tkinter}
+
+Graficele live sunt realizate cu \texttt{Matplotlib}. Pentru integrarea figurilor
+in fereastra Tkinter se foloseste backend-ul \texttt{FigureCanvasTkAgg}:
+
+\begin{lstlisting}[language=Python]
+self.canvas = FigureCanvasTkAgg(fig, master=left)
+self.canvas_widget = self.canvas.get_tk_widget()
+self.canvas_widget.grid(row=1, column=0, sticky="nsew")
+\end{lstlisting}
+
+Figura principala contine patru subplot-uri:
+
+\begin{itemize}
+    \item waveform pentru intrarea raw;
+    \item waveform pentru iesirea enhanced;
+    \item spectrograma pentru intrarea raw;
+    \item spectrograma pentru iesirea enhanced.
+\end{itemize}
+
+Pentru VAD exista o figura separata, integrata intr-un panou dedicat numit
+\texttt{Speech Activity}.
+
+\subsection{Buffere circulare pentru afisare live}
+
+UI-ul pastreaza ultimele esantioane audio in doua buffere NumPy:
+\texttt{raw\_buffer} si \texttt{output\_buffer}. Dimensiunea lor este determinata
+de parametrul \texttt{display-ms}, care stabileste cate milisecunde de istoric
+sunt afisate.
+
+La fiecare bloc nou, bufferele sunt actualizate cu \texttt{np.roll}:
+
+\begin{lstlisting}[language=Python]
+self.raw_buffer = np.roll(self.raw_buffer, -len(raw_block))
+self.raw_buffer[-len(raw_block):] = raw_block
+\end{lstlisting}
+
+Acest mecanism simuleaza o fereastra glisanta peste semnalul audio: datele vechi
+sunt impinse spre stanga, iar esantioanele noi apar in partea dreapta a graficului.
+
+\subsection{Actualizarea formelor de unda}
+
+Formele de unda sunt desenate ca obiecte \texttt{Line2D} Matplotlib. La refresh,
+nu se recreeaza graficul de la zero, ci se modifica doar datele liniilor:
+
+\begin{lstlisting}[language=Python]
+self.raw_line.set_ydata(raw)
+self.out_line.set_ydata(out)
+\end{lstlisting}
+
+Aceasta abordare este mai eficienta decat redesenarea completa a axelor si ajuta
+la mentinerea unei interfete fluide.
+
+\subsection{Calculul spectrogramelor pentru UI}
+
+Spectrogramele afisate in dashboard sunt calculate local in metoda
+\texttt{\_compute\_display\_spectrogram}. Pentru fiecare frame audio se aplica o
+fereastra Hann, apoi se calculeaza FFT real:
+
+\begin{lstlisting}[language=Python]
+fft_frame = np.fft.rfft(frame * window, n=config.N_FFT)
+mag_db = 20.0 * np.log10(np.maximum(np.abs(fft_frame), 1e-4))
+\end{lstlisting}
+
+Magnitudinea este convertita in decibeli si limitata intre \(-80\) dB si \(0\) dB
+pentru afisare stabila. Imaginea spectrogramelor este actualizata prin
+\texttt{imshow}:
+
+\begin{lstlisting}[language=Python]
+self.raw_spec_image.set_data(raw_spec)
+self.out_spec_image.set_data(out_spec)
+\end{lstlisting}
+
+Spectrograma raw foloseste colormap-ul \texttt{magma}, iar spectrograma enhanced
+foloseste \texttt{viridis}, pentru diferentiere vizuala rapida.
+
+\subsection{Afisarea VAD live}
+
+Interfata afiseaza si o curba de incredere VAD. La fiecare refresh, pe bufferul
+raw este rulat detectorul \texttt{EnergyZCRVAD} in modul soft:
+
+\begin{lstlisting}[language=Python]
+vad_soft = EnergyZCRVAD().predict_soft(raw)
+self.vad_line.set_data(vad_time, vad_soft)
+\end{lstlisting}
+
+Curba rezultata are valori in intervalul \([0,1]\), unde valorile apropiate de
+1 indica probabilitate mai mare de activitate vocala.
+
+\subsection{Limitarea ratei de redesenare}
+
+Redesenarea grafica este costisitoare, mai ales cand sunt actualizate simultan
+waveform-uri si spectrograme. Pentru a evita consumul excesiv de CPU, canvas-ul
+este redesenat doar daca a trecut un interval minim de timp:
+
+\begin{lstlisting}[language=Python]
+if now - self.last_refresh_time >= 0.08:
+    self.canvas.draw_idle()
+    self.last_refresh_time = now
+\end{lstlisting}
+
+Aceasta inseamna o frecventa vizuala de aproximativ 12 cadre pe secunda, suficienta
+pentru monitorizare audio, dar mult mai eficienta decat redesenarea la fiecare
+callback audio.
+
+\section{Gestionarea comenzilor din interfata}
+
+\subsection{Variabile pending}
+
+Comenzile utilizatorului nu modifica direct starea motorului audio. In schimb,
+interfata seteaza variabile intermediare de tip \texttt{pending}. De exemplu,
+cand utilizatorul schimba metoda de denoising, UI-ul actualizeaza
+\texttt{pending\_method}:
+
+\begin{lstlisting}[language=Python]
+def _on_method_var_changed(self, *_args) -> None:
+    self.pending_method = self.method_var.get()
+\end{lstlisting}
+
+Motorul realtime verifica periodic daca exista o cerere noua:
+
+\begin{lstlisting}[language=Python]
+requested_method = self.visualizer.consume_requested_method()
+if requested_method is not None:
+    self.enhancer.set_method(requested_method)
+\end{lstlisting}
+
+Acest model este folosit pentru metoda de procesare, modul VAD, sursa audio,
+dispozitive, SNR, dry/wet, output gain, scenarii, distorsiuni, snapshot si
+recording.
+
+\subsection{Avantajul modelului pending-consume}
+
+Modelul \texttt{pending-consume} are doua avantaje principale. In primul rand,
+evita modificarea directa a motorului audio din callback-urile GUI. In al doilea
+rand, toate schimbarile sunt aplicate intr-un punct controlat al buclei realtime,
+ceea ce reduce riscul de conditii de cursa si stari partial actualizate.
+
+\section{Robustete si tratarea problemelor realtime}
+
+Aplicatia include mai multe mecanisme de robustete:
+
+\begin{itemize}
+    \item daca \texttt{output\_queue} este goala, se trimite temporar liniste la
+    iesire;
+    \item daca \texttt{input\_queue} este plina, se elimina blocuri vechi pentru
+    a evita cresterea latentei;
+    \item daca microfonul pare silentios pentru mai multe callback-uri, se emite
+    un avertisment;
+    \item daca schimbarea dispozitivelor audio esueaza, aplicatia revine la
+    ultima pereche de dispozitive functionala;
+    \item la inchidere, thread-ul de procesare este oprit controlat;
+    \item daca recording-ul este activ, fisierele raw si enhanced sunt salvate
+    la final.
+\end{itemize}
+
+\section{Concluzie}
+
+Interfata grafica realtime foloseste o arhitectura concurenta simpla, dar
+potrivita pentru procesarea audio interactiva. Callback-ul \texttt{sounddevice}
+este mentinut scurt, procesarea este mutata intr-un thread separat, comunicarea
+se face prin cozi, oprirea este controlata prin \texttt{threading.Event}, iar
+bufferele partajate sunt protejate prin \texttt{threading.Lock}.
+
+Pentru afisare, proiectul foloseste \texttt{Tkinter} si \texttt{ttk} pentru
+fereastra si controale, iar \texttt{Matplotlib} pentru forme de unda, spectrograme
+si curba VAD. Prin combinarea acestor tehnologii, aplicatia poate rula in timp
+real, poate raspunde la comenzile utilizatorului si poate afisa clar diferenta
+dintre semnalul zgomotos si semnalul imbunatatit.
+
+\end{document}

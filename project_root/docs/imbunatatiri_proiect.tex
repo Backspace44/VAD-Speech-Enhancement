@@ -1,0 +1,691 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[romanian]{babel}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\geometry{margin=2.5cm}
+
+\definecolor{codebackground}{rgb}{0.95,0.95,0.95}
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{codebackground},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    keepspaces=true,
+    showstringspaces=false,
+    tabsize=2
+}
+\lstset{style=codestyle}
+
+\title{Evolutia si imbunatatirea proiectului de Speech Enhancement}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introducere}
+
+Proiectul are ca obiectiv reducerea zgomotului din semnale de vorbire printr-o
+combinatie de metode clasice de procesare digitala a semnalului si metode bazate
+pe invatare profunda. In forma actuala, sistemul include algoritmi DSP de
+referinta, un detector VAD, modele neuronale de tip MaskNet, mecanisme de
+evaluare, preseturi experimentale, un demo offline si o interfata de demonstratie
+in timp real.
+
+Documentul prezinta, pas cu pas, imbunatatirile aduse proiectului fata de primele
+iteratii. Comparatia este realizata pe baza structurii actuale a proiectului, a
+istoricului Git si a componentelor pastrate pentru compatibilitate, precum
+\texttt{SimpleMaskNet}. Primele iteratii pot fi caracterizate ca o varianta
+functionala, dar sumara: accentul era pus pe ideea generala de denoising cu
+MaskNet, metode clasice si VAD, fara un pipeline experimental complet standardizat.
+Forma actuala este o platforma mai matura, modulara si reproductibila.
+
+\section{Imagine de ansamblu asupra evolutiei}
+
+In primele iteratii, proiectul era descris sintetic ca un sistem de imbunatatire a
+semnalului audio, cu MaskNet, metode DSP, VAD, evaluare si demo. Ulterior,
+proiectul a fost extins in mai multe directii:
+
+\begin{enumerate}
+    \item Organizarea codului a fost separata pe module clare: date, DSP, modele,
+    antrenare, evaluare, utilitare si demo in timp real.
+    \item Modelul neuronal a evoluat de la o retea convolutionala simpla la o
+    arhitectura U-Net cu skip connections, BiLSTM, attention si blocuri reziduale.
+    \item Pipeline-ul de date a fost extins cu perechi clean/noisy, STFT calculat
+    on-the-fly, padding pentru secvente variabile, resampling la 16 kHz si suport
+    pentru etichete VAD hard/soft.
+    \item Antrenarea a devenit configurabila prin preseturi pentru model,
+    optimizer, scheduler, loss si dataset.
+    \item Evaluarea a trecut de la validari punctuale la comparatii intre metode,
+    checkpoint-uri si seturi de etichete VAD.
+    \item Proiectul a primit instrumente de livrare: CLI unificat, healthcheck,
+    logging, inventariere de artefacte si clasificarea rezultatelor oficiale.
+    \item Demo-ul a evoluat de la rulare offline la monitorizare in timp real,
+    cu selectie de metoda, vizualizari, fisiere externe, scenarii si inregistrare.
+    \item In cea mai recenta etapa a fost adaugata varianta Complex MaskNet, care
+    estimeaza o masca complexa, nu doar o masca reala pe magnitudine.
+\end{enumerate}
+
+\section{Comparatie generala intre primele iteratii si forma actuala}
+
+\begin{longtable}{p{0.23\textwidth}p{0.34\textwidth}p{0.34\textwidth}}
+\toprule
+\textbf{Aspect} & \textbf{Primele iteratii} & \textbf{Forma actuala} \\
+\midrule
+\endhead
+Structura proiectului &
+Structura mai redusa, centrata pe functionalitatea principala. &
+Structura modulara in \texttt{src/data\_prep}, \texttt{src/dsp},
+\texttt{src/models}, \texttt{src/train}, \texttt{src/eval}, \texttt{src/tools}
+si \texttt{src/utils}. \\
+\addlinespace
+Model neuronal &
+Model simplu de estimare a mastii, reprezentat prin \texttt{SimpleMaskNet}. &
+MaskNet avansat cu U-Net, skip connections, BiLSTM, channel attention, variante
+reziduale, variante rapide si suport pentru masca complexa. \\
+\addlinespace
+Date &
+Utilizare de perechi audio clean/noisy intr-o forma de baza. &
+Suport pentru VoiceBank-DEMAND si LibriSpeech+DEMAND, matching robust de fisiere,
+resampling, crop, augmentare, preprocessing si VAD labels. \\
+\addlinespace
+Antrenare &
+Configuratie mai putin standardizata si mai greu de reprodus. &
+Preseturi oficiale, Adam/AdamW, OneCycleLR, mixed precision, checkpoint-uri,
+resume, istoric de antrenare si sumar JSON. \\
+\addlinespace
+Evaluare &
+Evaluare punctuala a unor metode. &
+Evaluare comparativa intre noisy baseline, Spectral Subtraction, Wiener Filter si
+MaskNet, plus comparare de checkpoint-uri, VAD si benchmark-uri. \\
+\addlinespace
+VAD &
+Detector VAD de baza, folosit ca referinta. &
+VAD evaluat separat, etichete adaptive hard/soft, integrare in target-ul de
+antrenare si vizualizare live a increderii VAD. \\
+\addlinespace
+Demo &
+Demo offline pentru exemple audio. &
+Demo offline plus demo realtime cu microfon, difuzor, surse sintetice, slider SNR,
+metode selectabile, snapshot si recording. \\
+\addlinespace
+Trasabilitate &
+Artefacte si rezultate mai greu de separat intre teste si rezultate finale. &
+Inventariere automata, clasificare in \texttt{official}, \texttt{benchmark},
+\texttt{smoke}, \texttt{demo} si \texttt{legacy}. \\
+\bottomrule
+\end{longtable}
+
+\section{Imbunatatirea 1: reorganizarea arhitecturii software}
+
+\subsection{Situatia initiala}
+
+In primele iteratii, proiectul functiona ca un ansamblu de scripturi si module
+orientate spre demonstrarea ideii principale: reducerea zgomotului cu ajutorul
+unui model neuronal si al unor metode clasice. Aceasta abordare este suficienta
+pentru prototipare, dar devine limitativa atunci cand proiectul trebuie extins,
+evaluat si prezentat intr-o lucrare de licenta.
+
+\subsection{Modificarea introdusa}
+
+Codul a fost reorganizat pe responsabilitati clare:
+
+\begin{itemize}
+    \item \texttt{src/data\_prep} pentru pregatirea seturilor de date, generarea
+    metadatelor, augmentare si etichete VAD;
+    \item \texttt{src/dsp} pentru STFT, metrici, VAD, Wiener Filter si Spectral
+    Subtraction;
+    \item \texttt{src/models} pentru arhitectura MaskNet si inferenta;
+    \item \texttt{src/train} pentru configurarea si rularea antrenarii;
+    \item \texttt{src/eval} pentru evaluari si rapoarte;
+    \item \texttt{src/tools} pentru CLI, healthcheck, demo realtime si inventar;
+    \item \texttt{src/utils} pentru logging, I/O audio, raportare si pipeline-uri.
+\end{itemize}
+
+\subsection{Efectul imbunatatirii}
+
+Separarea pe module reduce dependentele implicite si face proiectul mai usor de
+inteles. Fiecare componenta poate fi testata si extinsa independent. In plus,
+structura actuala permite explicarea mai clara a fluxului complet: date
+$\rightarrow$ reprezentare timp-frecventa $\rightarrow$ model $\rightarrow$
+reconstructie $\rightarrow$ evaluare.
+
+\section{Imbunatatirea 2: trecerea de la SimpleMaskNet la MaskNet avansat}
+
+\subsection{Situatia initiala}
+
+Modelul initial, pastrat in proiect ca \texttt{SimpleMaskNet}, este o retea
+convolutionala simpla. Aceasta contine cateva straturi \texttt{Conv2D},
+\texttt{BatchNorm} si activari ReLU, urmate de o convolutie finala si o activare
+sigmoid. Scopul sau este estimarea unei masti reale in intervalul $[0,1]$ pentru
+spectrograma de magnitudine.
+
+\subsection{Modificarea introdusa}
+
+Modelul principal a fost inlocuit cu o arhitectura MaskNet mai expresiva:
+
+\begin{itemize}
+    \item encoder-decoder de tip U-Net cu patru niveluri;
+    \item skip connections intre encoder si decoder;
+    \item bottleneck convolutional;
+    \item BiLSTM pentru modelarea contextului temporal;
+    \item mecanisme de channel attention;
+    \item variante configurabile: \texttt{tiny}, \texttt{tiny\_fast},
+    \texttt{balanced}, \texttt{balanced\_res}, \texttt{large};
+    \item blocuri reziduale pentru varianta recomandata \texttt{balanced\_res}.
+\end{itemize}
+
+\subsection{Comparatie tehnica}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Caracteristica} & \textbf{SimpleMaskNet} & \textbf{MaskNet actual} \\
+\midrule
+Tip arhitectura & CNN simplu & U-Net + BiLSTM + Attention \\
+Skip connections & Nu & Da \\
+Modelare temporala & Limitata & BiLSTM bidirectional \\
+Atentie pe canale & Nu & Da \\
+Blocuri reziduale & Nu & Optional, recomandat \\
+Variante de capacitate & Nu & Da \\
+Output & Masca reala & Masca reala sau complexa \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Efectul imbunatatirii}
+
+Noua arhitectura permite modelului sa invete atat structuri locale din
+spectrograma, prin convolutii, cat si dependente temporale pe durata mai multor
+cadre, prin BiLSTM. Skip connections ajuta la pastrarea detaliilor
+timp-frecventa, iar attention-ul permite recalibrarea canalelor relevante.
+Blocurile reziduale stabilizeaza antrenarea si imbunatatesc propagarea
+gradientilor.
+
+\section{Imbunatatirea 3: introducerea blocurilor reziduale}
+
+\subsection{Situatia initiala}
+
+Arhitectura convolutionala initiala procesa secvential feature-urile, fara cai
+explicite de shortcut in interiorul blocurilor. Pe masura ce reteaua devine mai
+adanca, aceasta abordare poate duce la optimizare mai dificila si la pierderea
+unor informatii utile.
+
+\subsection{Modificarea introdusa}
+
+In varianta \texttt{balanced\_res}, blocurile encoderului, decoderului si
+bottleneck-ului pot folosi conexiuni reziduale. Un bloc rezidual poate fi descris
+prin:
+
+\begin{equation}
+    h = \mathrm{ReLU}(F(x) + P(x)),
+\end{equation}
+
+unde $F(x)$ reprezinta transformarile convolutionale, iar $P(x)$ este fie
+identitatea, fie o proiectie $1 \times 1$ atunci cand numarul de canale se schimba.
+
+\subsection{Efectul imbunatatirii}
+
+Conexiunile reziduale reduc riscul de degradare la retele mai adanci si permit
+pastrarea unor informatii originale in timp ce reteaua invata corectii. Din acest
+motiv, presetul recomandat actual este \texttt{stage2\_recommended}, care combina
+\texttt{balanced\_res}, AdamW, OneCycleLR si MSE.
+
+\section{Imbunatatirea 4: pipeline de date mai robust}
+
+\subsection{Situatia initiala}
+
+Primele iteratii se bazau pe incarcarea perechilor de fisiere audio si pe
+calcularea spectrogramelor necesare pentru antrenare. O astfel de abordare este
+functionala, dar vulnerabila la diferente de sample rate, fisiere nepereche,
+durate diferite si secvente de lungimi variabile.
+
+\subsection{Modificarea introdusa}
+
+Clasa \texttt{SpeechEnhancementDataset} include acum:
+
+\begin{itemize}
+    \item cautare robusta a perechilor clean/noisy;
+    \item suport pentru fisiere \texttt{.wav} si \texttt{.flac};
+    \item conversie la mono;
+    \item resampling automat la 16 kHz;
+    \item alinierea semnalelor clean si noisy la aceeasi lungime;
+    \item crop optional pentru limitarea duratei;
+    \item augmentare audio;
+    \item preprocessing;
+    \item calcul STFT complex pentru semnalul clean si noisy;
+    \item generarea mastii ideale reale si a mastii complexe CRM;
+    \item padding in \texttt{collate\_fn\_pad} pentru batch-uri cu lungimi
+    diferite.
+\end{itemize}
+
+\subsection{Efectul imbunatatirii}
+
+Pipeline-ul actual elimina multe surse de erori practice. Fisierele cu sample
+rate diferit pot fi folosite fara conversie manuala, secventele de durate diferite
+pot intra in acelasi batch, iar modelul poate fi antrenat atat pe magnitudine, cat
+si pe reprezentari complexe.
+
+\section{Imbunatatirea 5: extinderea seturilor de date}
+
+\subsection{Situatia initiala}
+
+In primele forme, proiectul se concentra pe un set de date principal si pe
+validarea functionala a metodelor de denoising.
+
+\subsection{Modificarea introdusa}
+
+Forma actuala documenteaza doua configuratii principale:
+
+\begin{itemize}
+    \item VoiceBank-DEMAND, cu perechi clean/noisy pentru antrenare si testare;
+    \item LibriSpeech + DEMAND, cu fisiere generate la mai multe niveluri SNR
+    si cu etichete VAD asociate.
+\end{itemize}
+
+Pentru LibriSpeech + DEMAND, pipeline-ul poate resampla automat atat vorbirea
+curata, cat si zgomotul, la 16 kHz.
+
+\subsection{Efectul imbunatatirii}
+
+Adaugarea unui al doilea scenariu de date creste relevanta experimentala a
+proiectului. VoiceBank-DEMAND ramane util pentru comparatii standard, iar
+LibriSpeech + DEMAND permite experimente controlate cu niveluri diferite de zgomot
+si integrarea etichetelor VAD.
+
+\section{Imbunatatirea 6: integrarea VAD hard si soft}
+
+\subsection{Situatia initiala}
+
+VAD-ul era prezent ca metoda de detectie a activitatii vocale si ca element de
+evaluare separat. Acesta oferea o estimare binara sau simplificata a prezentei
+vorbirii.
+
+\subsection{Modificarea introdusa}
+
+Proiectul actual include generarea si utilizarea etichetelor VAD:
+
+\begin{itemize}
+    \item etichete hard, pentru decizii binare speech/non-speech;
+    \item etichete soft, pentru scoruri continue in intervalul $[0,1]$;
+    \item \texttt{vad\_soft\_mask\_floor}, care evita anularea completa a zonelor
+    ambigue;
+    \item comparatii intre variante fara VAD, cu VAD hard si cu VAD soft.
+\end{itemize}
+
+Pentru etichetele soft, gate-ul folosit poate fi scris:
+
+\begin{equation}
+    g[t] = f + (1-f)v[t],
+\end{equation}
+
+unde $v[t]$ este scorul VAD, iar $f$ este valoarea minima pastrata pentru zonele
+incerte.
+
+\subsection{Efectul imbunatatirii}
+
+VAD-ul nu mai este doar o componenta auxiliara, ci devine parte a modului in care
+se construieste target-ul de antrenare. In zonele fara vorbire, modelul este
+incurajat sa atenueze mai agresiv zgomotul. In zonele ambigue, varianta soft
+reduce riscul de stergere a segmentelor slabe de vorbire.
+
+\section{Imbunatatirea 7: introducerea Complex MaskNet}
+
+\subsection{Situatia initiala}
+
+MaskNet clasic estimeaza o masca reala aplicata pe magnitudinea spectrogramei
+zgomotoase. Reconstructia audio foloseste magnitudinea estimata si faza semnalului
+zgomotos:
+
+\begin{equation}
+    \hat{S}[k,t] = \hat{|S|}[k,t] e^{j \angle Y[k,t]}.
+\end{equation}
+
+Aceasta metoda este stabila, dar are o limitare importanta: faza zgomotoasa este
+refolosita, nu estimata.
+
+\subsection{Modificarea introdusa}
+
+Complex MaskNet foloseste doua canale de intrare, partea reala si partea imaginara
+a STFT-ului:
+
+\begin{equation}
+    X[k,t] =
+    \begin{bmatrix}
+        Y_r[k,t] \\
+        Y_i[k,t]
+    \end{bmatrix}.
+\end{equation}
+
+Modelul prezice o masca complexa:
+
+\begin{equation}
+    M[k,t] = M_r[k,t] + jM_i[k,t].
+\end{equation}
+
+Spectrograma curatata se obtine prin inmultire complexa:
+
+\begin{equation}
+    \hat{S}[k,t] = M[k,t]Y[k,t].
+\end{equation}
+
+\subsection{Comparatie intre MaskNet clasic si Complex MaskNet}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Aspect} & \textbf{MaskNet clasic} & \textbf{Complex MaskNet} \\
+\midrule
+Intrare & Magnitudine $|Y|$ & Real si imaginar $(Y_r,Y_i)$ \\
+Canale intrare & 1 & 2 \\
+Target & Ideal Ratio Mask & Complex Ratio Mask \\
+Canale iesire & 1 & 2 \\
+Activare iesire & Sigmoid & Tanh scalat \\
+Interval output & $[0,1]$ & $[-5,5]$ \\
+Faza & Refoloseste faza noisy & Corecteaza implicit faza \\
+Reconstructie & Magnitudine + faza noisy & Spectrograma complexa estimata \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Efectul imbunatatirii}
+
+Complex MaskNet face modelul mai expresiv. El poate modifica nu doar energia
+spectrala, ci si componenta de faza prin estimarea directa a unei masti complexe.
+Aceasta este o imbunatatire importanta fata de abordarea bazata doar pe
+magnitudine, mai ales in zonele unde calitatea perceptuala este limitata de faza
+semnalului zgomotos.
+
+\section{Imbunatatirea 8: antrenare configurabila prin preseturi}
+
+\subsection{Situatia initiala}
+
+In fazele timpurii, schimbarea configuratiei de antrenare presupunea modificari
+manuale sau parametri separati. Acest lucru facea mai dificila reproducerea
+experimentelor.
+
+\subsection{Modificarea introdusa}
+
+Configuratia actuala foloseste preseturi:
+
+\begin{itemize}
+    \item preseturi de model, precum \texttt{balanced\_res} si
+    \texttt{complex\_balanced\_res};
+    \item preseturi de optimizer, inclusiv AdamW;
+    \item preseturi de scheduler, inclusiv OneCycleLR;
+    \item preseturi de loss, precum MSE, MAE, Huber si weighted combined;
+    \item preseturi experimentale complete, precum
+    \texttt{voicebank\_quality\_final},
+    \texttt{librispeech\_soft\_vad\_recommended} si
+    \texttt{librispeech\_complex\_masknet\_recommended}.
+\end{itemize}
+
+Exemplu de rulare recomandata:
+
+\begin{lstlisting}[language=bash]
+python -m src.train.train_mask_model --experiment-preset stage2_recommended --max-batches 30
+\end{lstlisting}
+
+\subsection{Efectul imbunatatirii}
+
+Preseturile transforma experimentele in configuratii numite si usor de repetat.
+Aceasta este o imbunatatire metodologica importanta: rezultatele pot fi asociate
+cu o configuratie clara, iar comparatiile intre variante devin mai corecte.
+
+\section{Imbunatatirea 9: optimizare si stabilitate in training}
+
+\subsection{Situatia initiala}
+
+Primele iteratii validau functionalitatea modelului, dar nu ofereau la fel de
+multe mecanisme pentru stabilitatea si monitorizarea antrenarii.
+
+\subsection{Modificarea introdusa}
+
+Forma actuala include:
+
+\begin{itemize}
+    \item Adam, AdamW, SGD si RMSprop;
+    \item schedulere precum ReduceLROnPlateau, StepLR, CosineAnnealingLR si
+    OneCycleLR;
+    \item clipping de gradient;
+    \item mixed precision;
+    \item salvare periodica de checkpoint-uri;
+    \item salvarea celui mai bun model pe validare;
+    \item resume din checkpoint;
+    \item \texttt{training\_history.json}, \texttt{summary.json} si index de
+    experimente.
+\end{itemize}
+
+\subsection{Efectul imbunatatirii}
+
+Aceste mecanisme reduc riscul de antrenari instabile si permit reluarea
+experimentelor. In acelasi timp, istoricul salvat face posibila analiza ulterioara
+a evolutiei pierderii, a configuratiei si a performantelor.
+
+\section{Imbunatatirea 10: evaluare comparativa extinsa}
+
+\subsection{Situatia initiala}
+
+Evaluarea initiala era orientata spre verificarea faptului ca metodele produc un
+semnal imbunatatit. Aceasta etapa este utila, dar nu este suficienta pentru o
+comparatie riguroasa.
+
+\subsection{Modificarea introdusa}
+
+Proiectul actual include scripturi pentru:
+
+\begin{itemize}
+    \item evaluarea tuturor metodelor pe acelasi set de fisiere;
+    \item compararea noisy baseline, Spectral Subtraction, Wiener Filter si
+    MaskNet;
+    \item calculul statisticilor si imbunatatirilor;
+    \item generarea de tabele si grafice;
+    \item compararea checkpoint-urilor;
+    \item compararea ultimului experiment cu un baseline;
+    \item agregarea benchmark-urilor finale.
+\end{itemize}
+
+Exemplu:
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli eval-all -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test
+\end{lstlisting}
+
+\subsection{Efectul imbunatatirii}
+
+Evaluarea devine reproductibila si comparabila. Metodele clasice nu sunt eliminate,
+ci pastrate ca baseline-uri. Astfel, se poate demonstra daca modelul neuronal
+aduce un castig real fata de metode DSP traditionale.
+
+\section{Imbunatatirea 11: CLI unificat si healthcheck}
+
+\subsection{Situatia initiala}
+
+Rularea proiectului presupunea cunoasterea scripturilor individuale si a
+argumentelor fiecaruia.
+
+\subsection{Modificarea introdusa}
+
+A fost introdus \texttt{project\_cli}, care centralizeaza comenzile principale:
+
+\begin{itemize}
+    \item \texttt{train};
+    \item \texttt{eval-vad};
+    \item \texttt{compare-vad};
+    \item \texttt{eval-all};
+    \item \texttt{compare-checkpoints};
+    \item \texttt{compare-latest};
+    \item \texttt{summarize-benchmarks};
+    \item \texttt{project-inventory};
+    \item \texttt{healthcheck};
+    \item \texttt{demo};
+    \item \texttt{realtime-demo}.
+\end{itemize}
+
+\subsection{Efectul imbunatatirii}
+
+CLI-ul unificat reduce efortul de utilizare si face proiectul mai usor de
+prezentat. Healthcheck-ul ajuta la identificarea rapida a problemelor de
+configuratie sau de dataset inainte de antrenari lungi.
+
+\section{Imbunatatirea 12: demo offline si realtime}
+
+\subsection{Situatia initiala}
+
+Demo-ul initial permitea rularea pe exemple audio si generarea de rezultate pentru
+inspectie.
+
+\subsection{Modificarea introdusa}
+
+Forma actuala include un demo realtime cu:
+
+\begin{itemize}
+    \item intrare de la microfon;
+    \item iesire catre difuzoare;
+    \item metode selectabile: MaskNet, Spectral Subtraction, Wiener Filter si
+    bypass;
+    \item vizualizare raw vs enhanced;
+    \item spectrograme live;
+    \item VAD confidence live;
+    \item selectie de dispozitive audio;
+    \item mod \texttt{speech+noise} cu fisiere incarcate de utilizator;
+    \item slider pentru SNR;
+    \item scenarii precum \texttt{neutral}, \texttt{office}, \texttt{street} si
+    \texttt{hard};
+    \item control dry/wet si output gain;
+    \item snapshot si inregistrare audio.
+\end{itemize}
+
+\subsection{Efectul imbunatatirii}
+
+Demo-ul nu mai este doar o verificare tehnica, ci o componenta de prezentare.
+Utilizatorul poate observa diferenta dintre semnalul zgomotos si cel imbunatatit,
+poate schimba metoda de denoising si poate testa scenarii diferite fara a reporni
+programul.
+
+\section{Imbunatatirea 13: gestionarea artefactelor si a rezultatelor finale}
+
+\subsection{Situatia initiala}
+
+Pe masura ce apar mai multe antrenari, fisiere de rezultate si checkpoint-uri,
+devine dificil de stiut care sunt artefactele oficiale si care sunt doar teste.
+
+\subsection{Modificarea introdusa}
+
+Proiectul include un sistem de inventariere care clasifica artefactele in:
+
+\begin{itemize}
+    \item \texttt{official};
+    \item \texttt{benchmark};
+    \item \texttt{smoke};
+    \item \texttt{demo};
+    \item \texttt{legacy};
+    \item \texttt{other}.
+\end{itemize}
+
+Comanda dedicata este:
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli project-inventory
+\end{lstlisting}
+
+Aceasta genereaza fisiere CSV si JSON cu inventarul artefactelor si cu
+recomandarile pentru livrare.
+
+\subsection{Efectul imbunatatirii}
+
+Aceasta etapa imbunatateste calitatea livrarii proiectului. Rezultatele finale pot
+fi identificate rapid, iar testele scurte sau rularile istorice raman disponibile
+fara sa fie confundate cu artefactele oficiale.
+
+\section{Fluxul actual complet al proiectului}
+
+Fluxul complet in forma actuala poate fi descris astfel:
+
+\begin{enumerate}
+    \item Se verifica structura datasetului cu \texttt{healthcheck}.
+    \item Se pregatesc datele clean/noisy si, daca este cazul, etichetele VAD.
+    \item Se selecteaza un preset experimental.
+    \item Dataloader-ul incarca perechi clean/noisy, resampleaza, aplica
+    preprocessing si calculeaza STFT.
+    \item Pentru MaskNet clasic se construieste IRM; pentru Complex MaskNet se
+    construieste CRM.
+    \item Modelul este antrenat cu optimizerul si schedulerul configurate.
+    \item Se salveaza checkpoint-uri si istoricul de antrenare.
+    \item Se evalueaza checkpoint-ul fata de baseline-uri clasice.
+    \item Se genereaza rapoarte, grafice si tabele.
+    \item Se ruleaza demo-ul offline sau realtime.
+    \item Se inventariaza artefactele finale pentru lucrare si prezentare.
+\end{enumerate}
+
+\section{Comenzi reprezentative}
+
+\subsection{Verificarea proiectului}
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli healthcheck -- --dataset librispeech
+\end{lstlisting}
+
+\subsection{Antrenare recomandata pe LibriSpeech}
+
+\begin{lstlisting}[language=bash]
+python -m src.train.train_mask_model --experiment-preset librispeech_soft_vad_recommended
+\end{lstlisting}
+
+\subsection{Antrenare recomandata cu VAD soft pe LibriSpeech}
+
+\begin{lstlisting}[language=bash]
+python -m src.data_prep.generate_vad_labels --split all --label-set adaptive_soft_v1 --label-mode soft
+python -m src.train.train_mask_model --experiment-preset librispeech_soft_vad_recommended
+\end{lstlisting}
+
+\subsection{Antrenare Complex MaskNet}
+
+\begin{lstlisting}[language=bash]
+python -m src.train.train_mask_model --experiment-preset librispeech_complex_masknet_recommended
+\end{lstlisting}
+
+\subsection{Compararea checkpoint-urilor}
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli compare-checkpoints -- --clean-dir data/voicebank_demand/clean/test --noisy-dir data/voicebank_demand/noisy/test --checkpoint baseline=checkpoints/baseline.pth --checkpoint stage2=checkpoints/stage2_recommended.pth --max-files 20
+\end{lstlisting}
+
+\subsection{Demo realtime}
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli realtime-demo -- --method masknet --visualize --record
+\end{lstlisting}
+
+\section{Concluzie}
+
+Comparativ cu primele iteratii, forma actuala a proiectului este substantial mai
+completa. Imbunatatirile nu constau doar in cresterea complexitatii modelului, ci
+si in maturizarea intregului ecosistem experimental: date mai bine gestionate,
+antrenare reproductibila, evaluare comparativa, demo in timp real si organizare
+clara a artefactelor.
+
+Din punct de vedere tehnic, evolutia principala este trecerea de la o retea simpla
+de estimare a unei masti reale la o familie de modele MaskNet configurabile,
+incluzand varianta reziduala recomandata si varianta Complex MaskNet. Din punct de
+vedere metodologic, proiectul a evoluat de la un prototip functional la o platforma
+care poate sustine experimente, comparatii si demonstratii reproductibile.
+
+Prin aceste imbunatatiri, proiectul devine mai potrivit pentru o lucrare de
+licenta: are o structura explicabila, rezultate comparabile, componente
+demonstrabile si o separare clara intre prototipuri, teste si artefacte finale.
+
+\end{document}

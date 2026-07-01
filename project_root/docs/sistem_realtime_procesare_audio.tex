@@ -1,0 +1,937 @@
+\chapter{Sistemul real-time de procesare audio}
+
+\section{Rolul sistemului}
+
+Sistemul real-time de procesare audio reprezinta componenta interactiva a
+proiectului de \textit{speech enhancement}. Daca pipeline-ul offline permite
+antrenarea, evaluarea si compararea metodelor pe fisiere audio preinregistrate,
+modul real-time are rolul de a demonstra comportamentul intregului sistem in
+conditii de utilizare apropiate de o aplicatie practica: semnalul este captat
+continuu, este procesat pe blocuri scurte, apoi este redat imediat catre
+dispozitivul de iesire.
+
+Obiectivul principal al acestei componente este reducerea zgomotului dintr-un
+semnal de vorbire cu o intarziere suficient de mica pentru monitorizare live.
+Aplicatia primeste un flux audio de la microfon sau dintr-o sursa sintetica
+\texttt{speech+noise}, aplica una dintre metodele de imbunatatire disponibile
+si livreaza catre difuzoare sau casti semnalul procesat. In paralel, interfata
+grafica afiseaza formele de unda, spectrogramele, nivelurile RMS, scorul VAD
+si statisticile de procesare.
+
+Din punct de vedere functional, sistemul real-time trebuie sa indeplineasca
+urmatoarele cerinte:
+
+\begin{itemize}
+    \item sa citeasca semnal audio in mod continuu, fara blocarea firului audio;
+    \item sa proceseze fiecare bloc folosind o metoda selectabila: MaskNet,
+    Spectral Subtraction, Wiener Filter sau bypass;
+    \item sa redea semnalul imbunatatit cu latenta mica si cu amplitudine
+    controlata;
+    \item sa permita schimbarea metodei de procesare fara repornirea aplicatiei;
+    \item sa ofere o interfata vizuala pentru diagnostic si prezentare;
+    \item sa salveze optional inregistrari raw/enhanced si snapshot-uri ale
+    interfetei.
+\end{itemize}
+
+Aceasta componenta este importanta deoarece face legatura dintre rezultatele
+teoretice si utilizarea efectiva a modelului. Un model poate obtine valori bune
+pentru PESQ, STOI sau SNR in evaluarea offline, dar in regim real-time mai
+apar constrangeri suplimentare: timpul de inferenta, stabilitatea stream-ului
+audio, alegerea dispozitivelor, tratarea blocurilor lipsa si controlul
+feedback-ului acustic.
+
+\section{Structura modulara}
+
+Implementarea este impartita in mai multe module, fiecare avand o responsabilitate
+clara. Separarea este utila deoarece partea de streaming audio, partea de
+procesare, modelul neuronal si interfata grafica au cerinte diferite de timp,
+sincronizare si testare.
+
+\begin{table}[htbp]
+\centering
+\caption{Modulele principale ale sistemului real-time.}
+\label{tab:module_realtime}
+\vspace{0.5em}
+\begin{tabular}{p{0.35\textwidth}p{0.57\textwidth}}
+\toprule
+\textbf{Modul} & \textbf{Responsabilitate} \\
+\midrule
+\path{src/tools/realtime_demo.py} &
+Punctul de intrare al aplicatiei. Citeste argumentele CLI, alege checkpoint-ul,
+configureaza dispozitivul PyTorch, dimensiunea blocurilor audio, dispozitivele
+de intrare/iesire si porneste motorul real-time. \\
+\addlinespace
+\path{src/tools/realtime/engine.py} &
+Contine clasele \texttt{StreamingEnhancer} si \texttt{RealtimeDenoiseApp}.
+Gestioneaza bufferul de context, procesarea pe blocuri, cozile audio, firul
+worker si comunicarea cu interfata. \\
+\addlinespace
+\path{src/tools/realtime/ui.py} &
+Contine clasa \texttt{LiveComparisonUI}. Construieste interfata Tkinter,
+controalele, graficele Matplotlib, spectrogramele, nivelurile RMS si curba VAD. \\
+\addlinespace
+\path{src/tools/realtime/common.py} &
+Include functii comune: conversia milisecunde-esantioane, normalizarea
+blocurilor, calculul RMS, alegerea dispozitivelor, recording-ul si sursa
+sintetica \texttt{speech+noise}. \\
+\addlinespace
+\path{src/models/inference.py} &
+Incarca modelul MaskNet din checkpoint si aplica inferenta pe un semnal audio,
+folosind STFT, estimarea mastii si reconstructia prin ISTFT. \\
+\addlinespace
+\path{src/dsp/} &
+Contine metodele clasice de procesare: Spectral Subtraction, Wiener Filter,
+VAD Energy-ZCR si utilitarele STFT. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Aceasta organizare separa clar trei planuri ale aplicatiei: planul audio
+real-time, planul de procesare si planul vizual. Planul audio trebuie sa fie
+cat mai rapid si previzibil; planul de procesare poate fi mai costisitor, dar
+este izolat intr-un fir separat; planul vizual poate fi actualizat cu o rata
+mai mica decat rata callback-urilor audio, deoarece utilizatorul nu are nevoie
+de redesenare la fiecare bloc.
+
+\section{Parametrii audio de baza}
+
+Sistemul foloseste aceeasi configuratie audio ca restul proiectului, pentru a
+pastra compatibilitatea dintre antrenare, evaluare, demo offline si demo
+real-time. Frecventa de esantionare este:
+
+\[
+f_s = 16000 \ \text{Hz}.
+\]
+
+Parametrii STFT sunt:
+
+\begin{itemize}
+    \item lungimea ferestrei: \(L = 400\) esantioane, adica \(25\) ms;
+    \item hop-ul: \(H = 160\) esantioane, adica \(10\) ms;
+    \item dimensiunea FFT: \(N_{\text{FFT}} = 512\);
+    \item numarul de benzi de frecventa: \(K = 257\).
+\end{itemize}
+
+Pentru streaming, dimensiunea implicita a blocului audio este de \(32\) ms:
+
+\[
+B = \left\lfloor f_s \cdot \frac{32}{1000} \right\rfloor = 512
+\quad \text{esantioane}.
+\]
+
+In mod implicit, procesarea foloseste si o fereastra de context de \(640\) ms:
+
+\[
+C = \left\lfloor f_s \cdot \frac{640}{1000} \right\rfloor = 10240
+\quad \text{esantioane}.
+\]
+
+Contextul nu reprezinta in intregime latenta audibila. El este o memorie
+istorica folosita pentru ca algoritmii bazati pe STFT si modelul MaskNet sa
+lucreze pe o secventa suficient de lunga. Latenta efectiva perceputa este
+influentata mai ales de dimensiunea blocului, de intarzierea de taiere a cozii,
+de timpul de procesare si de buffering-ul dispozitivului audio.
+
+\section{Modelul de semnal}
+
+Semnalul observat la intrare este modelat ca suma dintre vorbirea curata si
+zgomot:
+
+\[
+x[n] = s[n] + v[n],
+\]
+
+unde \(s[n]\) este semnalul curat de vorbire, \(v[n]\) este zgomotul, iar
+\(x[n]\) este semnalul captat de microfon sau obtinut prin mixarea unui fisier
+de vorbire cu unul de zgomot.
+
+Scopul sistemului de imbunatatire este estimarea unui semnal:
+
+\[
+\hat{s}[n] \approx s[n],
+\]
+
+prin reducerea componentelor asociate zgomotului si pastrarea cat mai buna a
+continutului vocal. In domeniul timp-frecventa, semnalul este reprezentat prin
+STFT:
+
+\[
+X[k,m] =
+\sum_{n=0}^{L-1} x[n + mH] \, w[n] \, e^{-j2\pi kn/N_{\text{FFT}}},
+\]
+
+unde \(k\) este indicele frecventei, \(m\) este indicele cadrului, \(w[n]\)
+este fereastra Hann, \(L\) este lungimea cadrului, iar \(H\) este hop-ul.
+
+Cele mai multe metode din proiect opereaza asupra magnitudinii:
+
+\[
+|X[k,m]|,
+\]
+
+pastrand faza semnalului zgomotos pentru reconstructie. In varianta complexa a
+modelului MaskNet, sistemul poate lucra si cu partea reala si imaginara a STFT,
+estimand o masca complexa.
+
+\section{Fluxul general de executie}
+
+La pornire, aplicatia real-time urmeaza o secventa clara de initializare:
+
+\begin{enumerate}
+    \item sunt citite argumentele din linia de comanda;
+    \item este selectata metoda de procesare: \texttt{masknet},
+    \texttt{spectral\_subtraction}, \texttt{wiener} sau \texttt{bypass};
+    \item daca metoda este \texttt{masknet}, este ales si incarcat checkpoint-ul;
+    \item este selectat dispozitivul PyTorch, de obicei \texttt{cuda} daca exista
+    GPU disponibil, altfel \texttt{cpu};
+    \item sunt convertiti parametrii temporali din milisecunde in esantioane;
+    \item este creat obiectul \texttt{StreamingEnhancer};
+    \item sunt alese dispozitivele audio de intrare si iesire;
+    \item optional, este creata interfata \texttt{LiveComparisonUI};
+    \item optional, este creata sesiunea de recording;
+    \item este pornita aplicatia \texttt{RealtimeDenoiseApp}.
+\end{enumerate}
+
+Comanda uzuala de pornire a demo-ului cu interfata grafica este:
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli realtime-demo -- --method masknet --visualize
+\end{lstlisting}
+
+Pentru verificarea dispozitivelor audio, se poate folosi:
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli realtime-demo -- --list-devices
+\end{lstlisting}
+
+Iar pentru o demonstratie cu salvarea semnalelor raw si enhanced:
+
+\begin{lstlisting}[language=bash]
+python -m src.tools.project_cli realtime-demo -- --method masknet --visualize --record
+\end{lstlisting}
+
+\section{Captura si redarea audio}
+
+Fluxul audio este realizat cu biblioteca \texttt{sounddevice}. Implementarea
+foloseste doua stream-uri separate: un \texttt{InputStream} pentru citirea
+semnalului de la microfon si un \texttt{OutputStream} pentru redarea semnalului
+procesat. Ambele ruleaza cu acelasi sample rate, aceeasi dimensiune de bloc si
+un singur canal audio.
+
+In callback-ul de intrare, sistemul copiaza blocul primit de la dispozitiv:
+
+\[
+x_i = [x_i[0], x_i[1], \ldots, x_i[B-1]],
+\]
+
+unde \(i\) este indicele blocului curent, iar \(B\) este dimensiunea blocului
+in esantioane. Daca sursa \texttt{speech+noise} este activa si exista fisiere
+incarcate, blocul de microfon este inlocuit cu un bloc extras din mixul
+sintetic.
+
+Callback-ul de intrare nu ruleaza algoritmul de denoising. El doar pune blocul
+in coada de intrare:
+
+\[
+x_i \rightarrow \texttt{input\_queue}.
+\]
+
+Callback-ul de iesire incearca sa extraga cel mai recent bloc procesat:
+
+\[
+\hat{s}_i \leftarrow \texttt{output\_queue}.
+\]
+
+Daca nu exista un bloc disponibil, sistemul trimite la iesire un bloc de
+liniste. Aceasta alegere este preferabila blocarii callback-ului audio, deoarece
+un callback blocat produce intreruperi audibile si instabilitate la nivelul
+driverului audio.
+
+\section{Modelul concurent de procesare}
+
+Procesarea este separata de callback-urile audio printr-un model
+\textit{producer-consumer}. Callback-ul de intrare produce blocuri raw, firul
+worker le consuma si produce blocuri enhanced, iar callback-ul de iesire consuma
+blocurile enhanced.
+
+Sistemul foloseste doua cozi cu dimensiune limitata:
+
+\begin{itemize}
+    \item \texttt{input\_queue}: coada blocurilor raw;
+    \item \texttt{output\_queue}: coada blocurilor procesate.
+\end{itemize}
+
+Firul worker ruleaza continuu metoda de procesare:
+
+\begin{lstlisting}[language=Python]
+block = self.input_queue.get(timeout=0.1)
+enhanced = self.enhancer.process_block(block)
+self.output_queue.put_nowait(enhanced)
+\end{lstlisting}
+
+Acest design are doua avantaje. In primul rand, callback-urile audio raman
+scurte si predictibile. In al doilea rand, metodele costisitoare precum MaskNet
+pot rula fara a bloca direct firul audio. Daca procesarea este temporar mai
+lenta decat ritmul audio, coada de iesire poate ramane goala, caz in care se
+redau blocuri de liniste. Daca intrarea se acumuleaza prea mult, sistemul
+elimina blocuri vechi pentru a evita cresterea necontrolata a latentei.
+
+Oprirea este controlata prin \texttt{threading.Event}. Atat bucla principala,
+cat si firul worker verifica periodic evenimentul de oprire:
+
+\begin{lstlisting}[language=Python]
+while not self.stop_event.is_set():
+    ...
+\end{lstlisting}
+
+La inchiderea ferestrei, la apasarea butonului \texttt{Stop Demo} sau la
+\texttt{Ctrl+C}, evenimentul este setat, stream-urile sunt inchise, firul worker
+este asteptat prin \texttt{join}, iar fisierele de recording sunt salvate daca
+exista date.
+
+\section{Procesarea cu buffer de context}
+
+Clasa \texttt{StreamingEnhancer} este responsabila pentru aplicarea metodei de
+denoising pe blocuri audio. Deoarece algoritmii bazati pe STFT si modelul
+MaskNet au nevoie de context temporal, fiecare bloc nu este procesat complet
+izolat. In schimb, sistemul pastreaza un buffer glisant:
+
+\[
+u_i =
+[x_{i-r}, x_{i-r+1}, \ldots, x_i],
+\]
+
+unde \(u_i\) este fereastra curenta, iar \(r\) este numarul de blocuri istorice
+pastrate in context. In implementare, dimensiunea totala a bufferului este cel
+putin:
+
+\[
+N_{\text{buffer}} = C + T + B,
+\]
+
+unde \(C\) este contextul, \(T\) este zona de coada taiata pentru reducerea
+artefactelor de margine, iar \(B\) este blocul curent.
+
+La fiecare pas, bufferul este deplasat spre stanga, iar blocul nou este copiat
+la final:
+
+\[
+u_i[n] =
+\begin{cases}
+u_{i-1}[n+B], & 0 \leq n < N_{\text{buffer}} - B, \\
+x_i[n - (N_{\text{buffer}} - B)], & N_{\text{buffer}} - B \leq n < N_{\text{buffer}}.
+\end{cases}
+\]
+
+Metoda de denoising este aplicata pe intreaga fereastra \(u_i\), rezultand
+\(\hat{u}_i\). Din aceasta fereastra procesata se extrage doar blocul care
+trebuie redat:
+
+\[
+\hat{s}_i =
+\hat{u}_i[N_{\text{buffer}} - T - B : N_{\text{buffer}} - T].
+\]
+
+Taierea cozii cu \(T\) esantioane reduce efectele de margine aparute la finalul
+ferestrei procesate. In configuratia implicita, \(T\) este egal cu lungimea
+ferestrei STFT, adica \(25\) ms. Astfel, sistemul prefera sa redea un segment
+aflat putin in urma capatului curent al bufferului, deoarece acesta are mai mult
+context si este mai stabil.
+
+\section{Normalizare si controlul amplitudinii}
+
+In procesarea real-time, amplitudinea trebuie controlata cu atentie pentru a
+evita clipping-ul si semnalele instabile. Fiecare bloc audio este convertit in
+\texttt{float32}, valorile invalide sunt inlocuite cu zero, iar semnalul este
+limitat in intervalul \([-1, 1]\).
+
+Functia de normalizare foloseste un prag de varf:
+
+\[
+p = \max_n |x[n]|.
+\]
+
+Daca \(p > 0.98\), blocul este scalat:
+
+\[
+x_{\text{norm}}[n] = x[n] \cdot \frac{0.98}{p}.
+\]
+
+Altfel, blocul este pastrat. La final, se aplica o limitare:
+
+\[
+x_{\text{out}}[n] = \min(1, \max(-1, x_{\text{norm}}[n])).
+\]
+
+Sistemul include si un control \texttt{dry/wet}, care permite amestecarea
+semnalului procesat cu semnalul original:
+
+\[
+y[n] = \lambda \hat{s}[n] + (1-\lambda)x[n],
+\]
+
+unde \(\lambda \in [0,1]\). Pentru \(\lambda = 1\), utilizatorul aude doar
+semnalul imbunatatit. Pentru \(\lambda = 0\), sistemul functioneaza ca monitor
+direct al intrarii.
+
+Exista si un control de \texttt{output gain}, exprimat in dB. Conversia in
+factor liniar este:
+
+\[
+g = 10^{G_{\text{dB}}/20}.
+\]
+
+Semnalul redat devine:
+
+\[
+y_g[n] = g \cdot y[n],
+\]
+
+dupa care se aplica din nou normalizarea pentru siguranta.
+
+\section{Metodele de procesare disponibile}
+
+\subsection{Bypass}
+
+Modul \texttt{bypass} nu aplica nicio filtrare. Semnalul de iesire este identic
+cu intrarea, cu exceptia normalizarii de siguranta:
+
+\[
+\hat{s}[n] = x[n].
+\]
+
+Acest mod este util in demonstratii deoarece ofera o referinta auditiva si
+vizuala. Utilizatorul poate asculta semnalul brut, apoi poate comuta catre
+Spectral Subtraction, Wiener Filter sau MaskNet pentru a observa diferenta.
+
+\subsection{Spectral Subtraction}
+
+Metoda Spectral Subtraction presupune estimarea unei magnitudini medii a
+zgomotului si scaderea acesteia din magnitudinea semnalului zgomotos. In
+implementarea proiectului, zgomotul este estimat din cadrele cu cea mai mica
+energie, fara a necesita etichete externe VAD.
+
+Pentru spectrograma zgomotoasa \(Y[k,m]\), energia cadrului este:
+
+\[
+E[m] = \frac{1}{K}\sum_{k=0}^{K-1}|Y[k,m]|^2.
+\]
+
+Se aleg primele \(M\) cadre cu energie minima, iar profilul de zgomot este:
+
+\[
+\hat{N}[k] =
+\frac{1}{M}\sum_{m \in \mathcal{I}_{\text{low}}} |Y[k,m]|.
+\]
+
+Magnitudinea imbunatatita este:
+
+\[
+|\hat{S}[k,m]| =
+\max\left(|Y[k,m]| - \alpha \hat{N}[k], \beta \hat{N}[k]\right),
+\]
+
+unde \(\alpha\) este factorul de scadere, iar \(\beta\) este podeaua spectrala.
+In configuratia implicita, \(\alpha = 1.0\), iar \(\beta = 0.02\).
+
+Spectrograma complexa este reconstruita folosind faza zgomotoasa:
+
+\[
+\hat{S}[k,m] = |\hat{S}[k,m]| e^{j\angle Y[k,m]}.
+\]
+
+Avantajul metodei este costul redus de calcul. Limitarea principala este
+tendinta de a produce artefacte muzicale atunci cand estimarea zgomotului este
+imprecisa sau zgomotul variaza rapid.
+
+\subsection{Wiener Filter}
+
+Filtrul Wiener foloseste o estimare a densitatii spectrale de putere a zgomotului
+si calculeaza un castig dependent de raportul semnal-zgomot a posteriori.
+Profilul de zgomot este estimat tot din cadrele cu energie mica:
+
+\[
+\hat{\sigma}_v^2[k] =
+\frac{1}{M}\sum_{m \in \mathcal{I}_{\text{low}}} |Y[k,m]|^2.
+\]
+
+SNR-ul a posteriori este:
+
+\[
+\text{SNR}_{\text{post}}[k,m] =
+\frac{|Y[k,m]|^2}{\hat{\sigma}_v^2[k] + \epsilon}.
+\]
+
+Castigul Wiener este:
+
+\[
+G[k,m] =
+\frac{\text{SNR}_{\text{post}}[k,m]}
+{\text{SNR}_{\text{post}}[k,m] + 1}.
+\]
+
+Magnitudinea procesata devine:
+
+\[
+|\hat{S}[k,m]| = G[k,m]|Y[k,m]|.
+\]
+
+Ca si Spectral Subtraction, metoda pastreaza faza semnalului zgomotos pentru
+ISTFT. In practica, Wiener Filter este stabil si rapid, dar poate lasa mai mult
+zgomot rezidual decat un model neuronal antrenat pe exemple variate.
+
+\subsection{MaskNet}
+
+Metoda \texttt{masknet} foloseste reteaua neuronala antrenata in proiect.
+Modelul primeste spectrograma semnalului zgomotos si estimeaza o masca spectrala.
+Pentru varianta de magnitudine, intrarea este:
+
+\[
+|Y| \in \mathrm{R}^{K \times M}.
+\]
+
+Modelul produce:
+
+\[
+\hat{M}[k,m] = f_{\theta}(|Y|)[k,m],
+\]
+
+unde \(f_{\theta}\) reprezinta reteaua MaskNet, iar \(\theta\) sunt parametrii
+invatati in timpul antrenarii. Magnitudinea imbunatatita este:
+
+\[
+|\hat{S}[k,m]| = \hat{M}[k,m] \cdot |Y[k,m]|.
+\]
+
+Reconstructia se face cu faza semnalului zgomotos:
+
+\[
+\hat{S}[k,m] =
+|\hat{S}[k,m]|e^{j\angle Y[k,m]}.
+\]
+
+Arhitectura MaskNet este de tip U-Net encoder-decoder, cu skip connections,
+blocuri convolutionale si, in variantele mai avansate, LSTM bidirectional si
+attention pe canale~\cite{unet,lstm,se}. Encoderul reduce rezolutia
+timp-frecventa si extrage reprezentari compacte, bottleneck-ul modeleaza
+dependente temporale, iar decoderul reconstruieste o masca la aceeasi rezolutie
+cu intrarea.
+
+In varianta complexa, modelul primeste doua canale:
+
+\[
+Y_{\text{in}} =
+\begin{bmatrix}
+\Re(Y) \\
+\Im(Y)
+\end{bmatrix},
+\]
+
+si estimeaza o masca complexa:
+
+\[
+\hat{M}_{\mathrm{C}} =
+\hat{M}_r + j\hat{M}_i.
+\]
+
+Spectrograma imbunatatita este:
+
+\[
+\hat{S}[k,m] =
+\hat{M}_{\mathrm{C}}[k,m] \cdot Y[k,m].
+\]
+
+Aceasta formulare permite corectii partiale si asupra fazei, nu doar asupra
+magnitudinii~\cite{complex_mask}. In modul real-time, checkpoint-ul incarcat
+determina automat daca modelul este de magnitudine sau complex.
+
+\section{Voice Activity Detection in sistemul real-time}
+
+Detectorul VAD folosit in proiect este bazat pe energie, rata trecerilor prin
+zero si caracteristici spectrale. In interfata real-time, VAD-ul este folosit
+in principal pentru monitorizare si diagnostic vizual: utilizatorul vede o
+curba de incredere in activitatea vocala, calculata pe bufferul de intrare.
+
+Pentru un cadru \(m\), energia este:
+
+\[
+E[m] = \frac{1}{L}\sum_{n=0}^{L-1}x_m^2[n].
+\]
+
+Rata trecerilor prin zero este:
+
+\[
+\text{ZCR}[m] =
+\frac{1}{L-1}
+\sum_{n=0}^{L-2}
+\mathbf{1}\{\operatorname{sign}(x_m[n]) \neq
+\operatorname{sign}(x_m[n+1])\}.
+\]
+
+Detectorul modernizat mai calculeaza raportul de energie in banda de vorbire
+si flatness-ul spectral. Scorurile normalizate sunt combinate intr-un scor
+soft:
+
+\[
+q[m] =
+w_E q_E[m] +
+w_B q_B[m] +
+w_Z q_Z[m] +
+w_F q_F[m],
+\]
+
+unde \(q_E\) este scorul de energie, \(q_B\) scorul de banda de vorbire,
+\(q_Z\) scorul ZCR, iar \(q_F\) scorul de flatness. Ponderile sunt normalizate,
+iar scorul final este limitat in intervalul \([0,1]\).
+
+Decizia hard foloseste praguri cu histerezis:
+
+\[
+\text{VAD}[m] =
+\begin{cases}
+1, & q[m] \geq \theta_{\text{start}}, \\
+0, & q[m] < \theta_{\text{end}},
+\end{cases}
+\quad
+\theta_{\text{start}} > \theta_{\text{end}}.
+\]
+
+Sistemul foloseste si netezire temporala, eliminarea segmentelor prea scurte
+si o forma de \textit{hangover}, astfel incat decizia sa nu oscileze rapid la
+limita dintre vorbire si tacere.
+
+In versiunea curenta a demo-ului, VAD-ul din interfata nu inlocuieste metoda de
+enhancement si nu opreste direct procesarea audio. Rolul lui principal este de
+a arata utilizatorului unde sistemul detecteaza activitate vocala si de a
+sprijini interpretarea spectrogramelor.
+
+\section{Sursa sintetica speech+noise}
+
+Pe langa intrarea de microfon, aplicatia poate folosi o sursa sintetica numita
+\texttt{speech+noise}. Aceasta permite incarcarea unui fisier de vorbire si a
+unui fisier de zgomot, apoi mixarea lor la un SNR controlabil. Modul este util
+pentru prezentari, deoarece reduce dependenta de zgomotul real din camera.
+
+La incarcarea unui fisier audio, sistemul:
+
+\begin{itemize}
+    \item citeste fisierul cu \texttt{soundfile};
+    \item converteste semnalele stereo la mono prin medierea canalelor;
+    \item resampleaza semnalul la \(16\) kHz daca este necesar;
+    \item normalizeaza amplitudinea pentru siguranta;
+    \item reconstruieste mixul daca exista si fisier de zgomot incarcat.
+\end{itemize}
+
+Pentru mixarea la un SNR dorit, se calculeaza puterile medii:
+
+\[
+P_s = \frac{1}{N}\sum_{n=0}^{N-1}s^2[n],
+\qquad
+P_v = \frac{1}{N}\sum_{n=0}^{N-1}v^2[n].
+\]
+
+Daca SNR-ul dorit este \(R_{\text{dB}}\), factorul de scalare al zgomotului este:
+
+\[
+a =
+\sqrt{
+10^{-R_{\text{dB}}/10}
+\cdot
+\frac{P_s}{P_v + \epsilon}
+}.
+\]
+
+Mixul rezultat este:
+
+\[
+x[n] = s[n] + a v[n].
+\]
+
+Sursa sintetica include si distorsiuni optionale, reutilizand pipeline-ul de
+augmentare:
+
+\begin{itemize}
+    \item modificare de gain;
+    \item time stretch;
+    \item pitch shift;
+    \item reverberatie;
+    \item egalizare;
+    \item compresie dinamica;
+    \item clipping.
+\end{itemize}
+
+Interfata include preset-uri de scenariu. \texttt{neutral} foloseste un caz
+moderat, \texttt{office} adauga EQ si compresie, \texttt{street} foloseste un
+SNR mai mic si distorsiuni mai agresive, iar \texttt{hard} combina mai multe
+distorsiuni pentru a testa limitele sistemului.
+
+\section{Interfata grafica}
+
+Interfata este construita cu Tkinter, \texttt{ttk} si Matplotlib. Fereastra este
+impartita in doua zone principale. In stanga sunt afisate datele live, iar in
+dreapta se afla controalele.
+
+Zona de monitorizare include:
+
+\begin{itemize}
+    \item forma de unda a semnalului raw;
+    \item forma de unda a semnalului enhanced;
+    \item spectrograma semnalului raw;
+    \item spectrograma semnalului enhanced;
+    \item nivelurile RMS pentru intrare si iesire;
+    \item indicatorul de semnal activ;
+    \item scorul VAD soft;
+    \item sumarul sesiunii.
+\end{itemize}
+
+Pentru afisarea formelor de unda, UI-ul pastreaza doua buffere circulare:
+\texttt{raw\_buffer} si \texttt{output\_buffer}. La fiecare bloc nou, datele
+vechi sunt deplasate, iar datele noi sunt inserate la final:
+
+\[
+b_i[n] =
+\begin{cases}
+b_{i-1}[n+B], & 0 \leq n < D-B, \\
+x_i[n-(D-B)], & D-B \leq n < D,
+\end{cases}
+\]
+
+unde \(D\) este numarul de esantioane afisat in istoric.
+
+Spectrogramele sunt calculate local pentru afisare. Pentru fiecare frame se
+aplica o fereastra Hann si FFT real, iar magnitudinea este convertita in dB:
+
+\[
+S_{\text{dB}}[k,m] =
+20 \log_{10}\left(\max(|X[k,m]|, 10^{-4})\right).
+\]
+
+Valorile sunt limitate intre \(-80\) dB si \(0\) dB pentru stabilitate vizuala.
+Interfata nu redeseneaza figura la fiecare callback audio, ci limiteaza rata de
+redesenare la aproximativ 12 cadre pe secunda. Aceasta decizie reduce consumul
+CPU si pastreaza UI-ul fluid.
+
+\section{Controalele utilizatorului}
+
+Controalele sunt grupate in tab-uri:
+
+\begin{itemize}
+    \item \textbf{Audio}: selectarea sursei \texttt{microphone} sau
+    \texttt{speech+noise}, alegerea dispozitivelor de intrare si iesire;
+    \item \textbf{Processing}: alegerea metodei de denoising, selectarea modului
+    VAD, reglarea \texttt{dry/wet}, reglarea \texttt{output gain}, snapshot,
+    recording si oprirea demo-ului;
+    \item \textbf{Files}: incarcarea fisierelor de vorbire si zgomot, plus
+    controlul play/pause pentru sursa sintetica;
+    \item \textbf{Augment}: alegerea scenariului, reglarea SNR-ului si activarea
+    distorsiunilor.
+\end{itemize}
+
+Comenzile din UI nu modifica direct starea motorului audio in momentul
+evenimentului grafic. Ele seteaza variabile \texttt{pending}, iar bucla principala
+le consuma intr-un punct controlat. Acest model se poate descrie astfel:
+
+\[
+\text{UI event} \rightarrow \text{pending request}
+\rightarrow \text{engine consume} \rightarrow \text{state update}.
+\]
+
+Prin aceasta decizie, schimbarea metodei, a dispozitivelor, a sursei, a SNR-ului
+sau a distorsiunilor nu se produce in interiorul callback-ului audio. Riscul de
+conditii de cursa este redus, iar callback-ul ramane simplu.
+
+\section{Recording si snapshot-uri}
+
+Sistemul poate salva semnalele raw si enhanced in fisiere WAV. Cand recording-ul
+este activ, fiecare pereche de blocuri este copiata in memorie:
+
+\[
+\{x_i\}_{i=1}^{N_b},
+\qquad
+\{\hat{s}_i\}_{i=1}^{N_b}.
+\]
+
+La finalul sesiunii, blocurile sunt concatenate:
+
+\[
+x_{\text{rec}} =
+[x_1, x_2, \ldots, x_{N_b}],
+\qquad
+\hat{s}_{\text{rec}} =
+[\hat{s}_1, \hat{s}_2, \ldots, \hat{s}_{N_b}],
+\]
+
+si sunt salvate ca:
+
+\begin{itemize}
+    \item \path{raw_microphone.wav};
+    \item \path{enhanced_output.wav}.
+\end{itemize}
+
+Interfata poate salva si snapshot-uri PNG ale figurii principale, utile in
+documentatie sau prezentare. Snapshot-ul surprinde forma de unda raw, forma de
+unda enhanced si cele doua spectrograme in acelasi moment al sesiunii.
+
+\section{Alegerea dispozitivelor audio}
+
+Aplicatia poate lista dispozitivele audio disponibile si poate primi explicit
+un ID sau un nume de dispozitiv. Daca utilizatorul nu alege manual dispozitivele,
+sistemul incearca sa selecteze automat o pereche potrivita de intrare si iesire.
+
+Selectia automata ia in calcul:
+
+\begin{itemize}
+    \item numarul de canale de intrare sau iesire;
+    \item potrivirea sample rate-ului implicit cu \(16\) kHz;
+    \item dispozitivele implicite ale sistemului;
+    \item cuvinte-cheie precum \texttt{microphone}, \texttt{speaker},
+    \texttt{headset}, \texttt{usb}, \texttt{bluetooth};
+    \item penalizari pentru dispozitive virtuale sau nepotrivite.
+\end{itemize}
+
+Cand utilizatorul schimba dispozitivele din UI, stream-ul audio este repornit.
+Daca noua pereche de dispozitive produce o eroare, aplicatia revine la ultima
+pereche functionala. Aceasta masura este importanta deoarece driverele audio pot
+refuza anumite combinatii de input si output, mai ales cand folosesc host API-uri
+diferite.
+
+\section{Robustete in regim real-time}
+
+Aplicatia include mai multe mecanisme de robustete:
+
+\begin{itemize}
+    \item \textbf{Warmup}: inainte de pornirea stream-ului, enhancer-ul proceseaza
+    o fereastra de liniste pentru a reduce latenta primului bloc;
+    \item \textbf{Output underflow}: daca nu exista bloc procesat disponibil,
+    se reda temporar liniste;
+    \item \textbf{Input overflow}: daca intrarea se acumuleaza prea mult, se
+    elimina blocuri vechi pentru a nu creste latenta;
+    \item \textbf{Silent input warning}: daca microfonul ramane aproape silentios
+    mai multe callback-uri, sistemul avertizeaza utilizatorul;
+    \item \textbf{Device fallback}: daca o pereche noua de dispozitive nu poate
+    fi deschisa, se revine la ultima pereche valida;
+    \item \textbf{Controlled shutdown}: oprirea inchide stream-ul, thread-ul
+    worker, UI-ul si salveaza recording-ul daca exista.
+\end{itemize}
+
+Aceste mecanisme sunt necesare deoarece demo-ul real-time este expus la factori
+care nu apar in evaluarea offline: lipsa semnalului de microfon, incompatibilitati
+de driver, procesare mai lenta decat ritmul audio, feedback acustic sau schimbari
+rapide ale comenzilor UI.
+
+\section{Analiza latentei}
+
+Latenta totala a sistemului poate fi aproximata prin suma mai multor componente:
+
+\[
+T_{\text{total}} \approx
+T_{\text{device}} +
+T_{\text{block}} +
+T_{\text{tail}} +
+T_{\text{proc}} +
+T_{\text{queue}},
+\]
+
+unde:
+
+\begin{itemize}
+    \item \(T_{\text{device}}\) este latenta driverului audio;
+    \item \(T_{\text{block}}\) este durata unui bloc audio;
+    \item \(T_{\text{tail}}\) este intarzierea introdusa prin taierea cozii;
+    \item \(T_{\text{proc}}\) este timpul de procesare al metodei alese;
+    \item \(T_{\text{queue}}\) este intarzierea introdusa de cozile interne.
+\end{itemize}
+
+Pentru valorile implicite:
+
+\[
+T_{\text{block}} = 32 \ \text{ms},
+\qquad
+T_{\text{tail}} = 25 \ \text{ms}.
+\]
+
+Contextul de \(640\) ms nu trebuie interpretat ca latenta audibila directa, ci
+ca memorie de analiza. Totusi, el creste numarul de esantioane procesate la
+fiecare apel si poate mari timpul de inferenta. De aceea, pe CPU, metoda MaskNet
+poate fi mai dificil de rulat real-time decat metodele clasice. In astfel de
+cazuri, aplicatia permite comutarea live la \texttt{spectral\_subtraction} sau
+\texttt{wiener}.
+
+Conditia practica pentru rulare stabila este:
+
+\[
+T_{\text{proc}} < T_{\text{block}}
+\]
+
+in medie, sau cel putin suficient de aproape de aceasta limita incat cozile sa
+nu acumuleze intarzieri. Daca timpul de procesare depaseste constant durata
+blocului, apar underflow-uri la iesire, drop-uri la intrare sau cresterea
+latentei.
+
+\section{Integrarea cu modelul antrenat}
+
+Pentru metoda MaskNet, aplicatia incarca automat cel mai bun checkpoint local
+daca utilizatorul nu furnizeaza explicit unul. Cautarea favorizeaza checkpoint-uri
+recomandate, de exemplu experimentele LibriSpeech cu VAD soft sau variantele de
+benchmark rapid, apoi cauta alte fisiere \path{masknet_best.pth}.
+
+Checkpoint-ul contine atat parametrii modelului, cat si configuratia arhitecturii.
+La incarcare, se reconstruiesc optiunile relevante:
+
+\begin{itemize}
+    \item numarul de canale de intrare;
+    \item numarul de canale de iesire;
+    \item numarul de canale de baza;
+    \item folosirea LSTM;
+    \item folosirea attention;
+    \item folosirea blocurilor reziduale;
+    \item tipul mastii: magnitudine sau complex;
+    \item activarea de iesire: sigmoid, tanh sau liniara.
+\end{itemize}
+
+Modelul este trecut in modul \texttt{eval}, iar inferenta foloseste
+\texttt{torch.inference\_mode}. Daca dispozitivul este CUDA, inferenta poate
+folosi autocast pentru eficienta. Rezultatul este convertit inapoi in NumPy si
+trimis catre motorul de streaming.
+
+\section{Avantaje si limitari}
+
+Principalul avantaj al sistemului real-time este ca pune toate componentele
+proiectului intr-un flux demonstrabil: captare, procesare, redare, vizualizare,
+control si salvare. Utilizatorul poate compara imediat metodele si poate vedea
+efectul lor pe semnalul audio, nu doar in tabele de evaluare.
+
+Avantajele principale sunt:
+
+\begin{itemize}
+    \item arhitectura modulara si usor de extins;
+    \item suport pentru metode DSP rapide si pentru MaskNet;
+    \item schimbare live a metodei de procesare;
+    \item sursa sintetica \texttt{speech+noise} cu SNR controlabil;
+    \item vizualizare simultana a formelor de unda si spectrogramelor;
+    \item mecanisme de robustete pentru cozi, dispozitive si oprire;
+    \item posibilitatea de a salva exemple audio si imagini pentru analiza.
+\end{itemize}
+
+Exista si limitari. MaskNet poate fi mai costisitor pe CPU, iar performanta
+real-time depinde de hardware. Estimarea bazata pe ferestre poate produce
+artefacte de margine daca dimensiunea contextului este prea mica. De asemenea,
+metodele care pastreaza faza semnalului zgomotos sunt limitate atunci cand
+distorsiunea de faza contribuie semnificativ la degradarea perceptuala. In
+plus, utilizarea microfonului si a difuzoarelor laptopului poate produce
+feedback acustic, de aceea castile sunt recomandate pentru demonstratii.
+
+\section{Concluzie}
+
+Sistemul real-time de procesare audio completeaza pipeline-ul de speech
+enhancement printr-o componenta interactiva si demonstrabila. Arhitectura sa
+se bazeaza pe separarea clara dintre callback-urile audio, firul de procesare
+si interfata grafica. Blocurile audio sunt transportate prin cozi, procesarea
+se face pe un buffer glisant cu context, iar metodele disponibile acopera atat
+baseline-uri DSP, cat si modelul neuronal MaskNet.
+
+Prin integrarea sursei \texttt{speech+noise}, a controalelor pentru SNR si
+distorsiuni, a vizualizarii live si a functiilor de recording, aplicatia permite
+testarea sistemului in conditii variate. Astfel, demo-ul real-time nu este doar
+o interfata de prezentare, ci si un instrument de diagnostic pentru stabilitatea,
+latenta si comportamentul perceptual al metodelor de reducere a zgomotului.

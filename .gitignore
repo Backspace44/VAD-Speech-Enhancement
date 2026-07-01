@@ -18,6 +18,7 @@ Thumbs.db
 
 # Large/generated project artifacts
 *.zip
+*.pdf
 *.pth
 *.pt
 data/

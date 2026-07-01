@@ -504,12 +504,12 @@ Pentru test rapid:
 python -m src.train.train_mask_model --experiment-preset librispeech_complex_masknet_recommended --max-batches 30
 \end{lstlisting}
 
-\subsection{Antrenare Complex MaskNet pe VoiceBank}
+\subsection{Antrenare Complex MaskNet pe LibriSpeech}
 
-Pentru VoiceBank-DEMAND:
+Pentru faza de antrenare si validare se foloseste LibriSpeech-DEMAND:
 
 \begin{lstlisting}[language=bash]
-python -m src.train.train_mask_model --experiment-preset voicebank_complex_masknet
+python -m src.train.train_mask_model --experiment-preset librispeech_complex_masknet_recommended
 \end{lstlisting}
 
 \subsection{Dry-run pentru verificarea configuratiei}
