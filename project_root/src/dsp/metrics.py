@@ -14,7 +14,6 @@ except ImportError:
     _pesq = None
 
 def snr_db(clean: np.ndarray, processed: np.ndarray) -> float:
-    # Validate inputs
     if clean.size == 0 or processed.size == 0:
         raise ValueError("Input arrays cannot be empty")
     
@@ -55,7 +54,7 @@ def pesq_score(clean: np.ndarray, processed: np.ndarray, sr: int | None = None) 
     processed = processed[:length].astype(np.float32)
     return float(_pesq(sr, clean, processed, "wb"))
 
-# Wrapper functions for compatibility
+# Backward-compatible names.
 def compute_snr(clean: np.ndarray, processed: np.ndarray, sr: int | None = None) -> float:
     """Compute Signal-to-Noise Ratio in dB."""
     return snr_db(clean, processed)
@@ -79,12 +78,10 @@ def compute_sisdr(clean: np.ndarray, processed: np.ndarray, sr: int | None = Non
     clean = clean[:length].astype(np.float32)
     processed = processed[:length].astype(np.float32)
     
-    # Scale-invariant projection
     alpha = np.dot(processed, clean) / (np.dot(clean, clean) + 1e-12)
     s_target = alpha * clean
     e_noise = processed - s_target
     
-    # SI-SDR calculation
     eps = 1e-12
     sisdr = 10 * np.log10(np.sum(s_target**2) / (np.sum(e_noise**2) + eps) + eps)
     return float(sisdr)
@@ -145,7 +142,7 @@ def segmental_snr(clean: np.ndarray, processed: np.ndarray, frame_len: int = 256
         p_noise = np.mean(noise_frame**2) + 1e-12
         
         snr_frame = 10.0 * np.log10(p_sig / p_noise)
-        # Clip to reasonable range
+        # Cap outliers.
         snr_frame = np.clip(snr_frame, -10, 35)
         snr_vals.append(snr_frame)
     
@@ -163,18 +160,15 @@ def log_spectral_distance(clean: np.ndarray, processed: np.ndarray) -> float:
     clean = clean[:length].astype(np.float32)
     processed = processed[:length].astype(np.float32)
     
-    # Compute power spectra
     from scipy import signal
     nperseg = 512
     f, _, Pxx_clean = signal.spectrogram(clean, nperseg=nperseg, noverlap=nperseg//2)
     f, _, Pxx_proc = signal.spectrogram(processed, nperseg=nperseg, noverlap=nperseg//2)
     
-    # Match time dimension
     min_time = min(Pxx_clean.shape[1], Pxx_proc.shape[1])
     Pxx_clean = Pxx_clean[:, :min_time]
     Pxx_proc = Pxx_proc[:, :min_time]
     
-    # Compute LSD
     eps = 1e-12
     lsd_frames = np.sqrt(np.mean((10 * np.log10(Pxx_clean + eps) - 10 * np.log10(Pxx_proc + eps))**2, axis=0))
     return float(np.mean(lsd_frames))
@@ -185,23 +179,12 @@ def evaluate_speech_enhancement(
     enhanced: np.ndarray, 
     sr: int | None = None
 ) -> Dict[str, float]:
-    """
-    Comprehensive speech enhancement evaluation.
-    
-    Args:
-        clean: Clean reference signal
-        enhanced: Enhanced signal
-        sr: Sample rate (optional, uses config default)
-    
-    Returns:
-        Dictionary with all standard metrics (PESQ, STOI, SNR, SegSNR, LSD)
-    """
+    """Compute enhancement metrics."""
     if sr is None:
         sr = config.SAMPLE_RATE
     
     metrics = {}
     
-    # Core metrics
     try:
         metrics['pesq'] = pesq_score(clean, enhanced, sr)
     except Exception:

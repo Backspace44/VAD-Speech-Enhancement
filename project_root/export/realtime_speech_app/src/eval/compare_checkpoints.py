@@ -1,7 +1,4 @@
-"""
-Compare multiple MaskNet checkpoints on the same evaluation subset.
-Saves per-run stats plus a compact comparison CSV/JSON summary.
-"""
+"""Compare MaskNet checkpoints."""
 
 from __future__ import annotations
 

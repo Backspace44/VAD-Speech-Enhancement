@@ -1,6 +1,4 @@
-"""
-Compare the effect of different LibriSpeech VAD label sets on IRM targets.
-"""
+"""Compare LibriSpeech VAD label sets."""
 
 from __future__ import annotations
 

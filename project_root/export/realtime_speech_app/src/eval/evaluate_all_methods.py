@@ -1,8 +1,4 @@
-"""
-Unified evaluation script for all enhancement methods.
-Compares classical methods (Spectral Subtraction, Wiener Filter) and MaskNet against noisy baseline.
-Outputs JSON results and PNG plots.
-"""
+"""Evaluate all enhancement methods."""
 
 from __future__ import annotations
 

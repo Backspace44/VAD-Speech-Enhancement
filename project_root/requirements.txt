@@ -1,25 +1,25 @@
-# pachete de baza
+# baza
 numpy>=1.24
 scipy>=1.10
 soundfile>=0.12
 matplotlib>=3.7
-seaborn>=0.12.0  # Statistical data visualization (used in plot_enhancement_distribution.py)
-librosa>=0.10.0  # Audio analysis and visualization (used in test_preprocessing.py)
+seaborn>=0.12.0  # grafice
+librosa>=0.10.0  # audio
 
-# retea neurala
+# model
 torch>=2.0
 torchcodec>=0.7
 
-# metrici de inteligibilitate/calitate (optionale, dar folosite in cod)
+# metrici optionale
 pystoi>=0.3.3
 pesq>=0.0.4
 
-# training utilities (optionale dar recomandate)
+# training
 tqdm>=4.65.0
 tensorboard>=2.12.0
 
-# CLI and logging utilities
-colorama>=0.4.6  # Colored console output
-pandas>=1.5.0    # For metrics aggregation and CSV export
-torchaudio>=2.0  # Audio loading/saving in demo.py
-sounddevice>=0.4.6  # Realtime microphone/speaker streaming demo
+# CLI/logging
+colorama>=0.4.6  # consola colorata
+pandas>=1.5.0    # CSV
+torchaudio>=2.0  # audio I/O
+sounddevice>=0.4.6  # realtime audio

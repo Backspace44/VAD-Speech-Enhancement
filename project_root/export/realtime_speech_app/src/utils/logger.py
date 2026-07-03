@@ -1,7 +1,4 @@
-"""
-Structured logging system for speech enhancement project.
-Provides consistent logging across all modules with file and console output.
-"""
+"""Logging helpers for the project."""
 
 import logging
 import sys
@@ -58,23 +55,7 @@ def setup_logger(
     use_color: bool = True,
     console_only: bool = False
 ) -> logging.Logger:
-    """
-    Setup a structured logger with file and console handlers.
-    
-    Args:
-        name: Logger name
-        log_dir: Directory for log files (default: logs/)
-        log_file: Log file name (default: auto-generated with timestamp)
-        level: Default logging level
-        console_level: Console-specific level (overrides level)
-        file_level: File-specific level (overrides level)
-        format_string: Custom format string
-        use_color: Use colored output for console
-        console_only: If True, only console handler is used (no file logging)
-        
-    Returns:
-        Configured logger instance
-    """
+    """Create a logger with console and optional file handlers."""
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
@@ -153,15 +134,7 @@ def setup_script_logger(
 
 
 def get_logger(name: str = "speech_enhancement") -> logging.Logger:
-    """
-    Get an existing logger or create a basic one.
-    
-    Args:
-        name: Logger name
-        
-    Returns:
-        Logger instance
-    """
+    """Get an existing logger or create a basic one."""
     logger = logging.getLogger(name)
     
 

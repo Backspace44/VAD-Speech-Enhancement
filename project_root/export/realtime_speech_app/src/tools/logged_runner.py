@@ -1,6 +1,4 @@
-"""
-Helpers for running legacy CLI entrypoints with unified logging.
-"""
+"""CLI runner helpers."""
 
 from __future__ import annotations
 

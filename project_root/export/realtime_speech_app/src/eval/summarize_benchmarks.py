@@ -1,6 +1,4 @@
-"""
-Aggregate experiment summary.json files into a final benchmark report.
-"""
+"""Aggregate benchmark summaries."""
 
 from __future__ import annotations
 

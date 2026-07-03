@@ -1,7 +1,4 @@
-"""
-Validate dataset integrity and structure.
-Checks for missing files, corrupt audio, clean-noisy correspondence.
-"""
+"""Validate dataset files and metadata."""
 
 import json
 from pathlib import Path
@@ -22,10 +19,7 @@ def check_file_exists(filepath: Path) -> bool:
 
 
 def check_audio_file(filepath: Path) -> Tuple[bool, str]:
-    """
-    Validate audio file can be read.
-    Returns (is_valid, error_message)
-    """
+    """Check that an audio file can be read."""
     if not HAS_SOUNDFILE:
         return True, ""
     
@@ -47,10 +41,7 @@ def validate_clean_noisy_correspondence(
     noisy_dir: Path,
     verbose: bool = False
 ) -> Dict:
-    """
-    Validate that each noisy file has a corresponding clean file.
-    Returns validation results dictionary.
-    """
+    """Check clean/noisy file matching."""
     results = {
         'total_noisy': 0,
         'matched': 0,
@@ -111,10 +102,7 @@ def validate_clean_noisy_correspondence(
 
 
 def validate_metadata(metadata_path: Path) -> Dict:
-    """
-    Validate metadata file.
-    Returns validation results.
-    """
+    """Validate a metadata JSON file."""
     results = {
         'exists': False,
         'valid_json': False,
@@ -147,10 +135,7 @@ def validate_metadata(metadata_path: Path) -> Dict:
 
 
 def validate_dataset(dataset_name: str, data_root: Path) -> Dict:
-    """
-    Validate entire dataset.
-    Returns comprehensive validation results.
-    """
+    """Validate one dataset."""
     print(f"\n{'='*70}")
     print(f"VALIDATING {dataset_name.upper()}")
     print(f"{'='*70}")

@@ -1,7 +1,4 @@
-"""
-VAD Evaluation Script - Adaptive Energy+ZCR+Spectral Method.
-Evaluates the upgraded VAD detector on LibriSpeech test set.
-"""
+"""Evaluate the adaptive VAD detector."""
 
 from pathlib import Path
 import json
@@ -23,7 +20,6 @@ def evaluate_on_file(
     vad_detector: EnergyZCRVAD
 ) -> Dict[str, float]:
     """Evaluate VAD on a single file."""
-    # Load noisy audio
     noisy, sr = sf.read(noisy_path)
     
     if sr != config.SAMPLE_RATE:
@@ -34,13 +30,10 @@ def evaluate_on_file(
     if noisy.ndim > 1:
         noisy = np.mean(noisy, axis=1)
     
-    # Load ground truth VAD labels
     vad_true = np.load(label_path).astype(np.uint8)
     
-    # Predict VAD
     vad_pred = vad_detector.predict(noisy)
     
-    # Align lengths
     L = min(len(vad_pred), len(vad_true))
     if L == 0:
         return None
@@ -48,7 +41,6 @@ def evaluate_on_file(
     vad_pred = vad_pred[:L]
     vad_true = vad_true[:L]
     
-    # Compute metrics
     metrics = eval_vad_metrics(vad_true, vad_pred)
     return metrics
 
@@ -60,22 +52,11 @@ def evaluate_librispeech_test_for_snr(
     max_files: int | None = None,
     label_set: str = "adaptive_v1",
 ) -> Dict[str, float]:
-    """
-    Evaluate VAD on LibriSpeech test set for a specific SNR level.
-    
-    Args:
-        snr_db: SNR level (0, 5, 10 dB)
-        vad_detector: adaptive VAD detector instance
-        verbose: Print progress
-    
-    Returns:
-        Dictionary with average metrics (accuracy, precision, recall, f1)
-    """
+    """Evaluate VAD for one SNR level."""
     root = config.LIBRISPEECH_ROOT
     noisy_dir = root / "noisy" / "test"
     labels_dir = config.LIBRISPEECH_VAD_ROOT / label_set / "test"
     
-    # Find noisy files for this SNR
     pattern = f"*_snr{snr_db}dB.wav"
     noisy_files = sorted(noisy_dir.glob(pattern))
     
@@ -115,7 +96,6 @@ def evaluate_librispeech_test_for_snr(
     if not metrics_list:
         raise RuntimeError(f"No files successfully evaluated for SNR={snr_db}dB")
     
-    # Compute average metrics
     keys = metrics_list[0].keys()
     avg_metrics: Dict[str, float] = {}
     for k in keys:
@@ -131,7 +111,6 @@ def plot_vad_results(results: Dict[str, Dict[str, float]], output_dir: Path):
     snr_levels = sorted([int(k) for k in results.keys()])
     metrics = ['accuracy', 'precision', 'recall', 'f1']
     
-    # Line plot for all metrics
     fig, ax = plt.subplots(figsize=(10, 6))
     
     for metric in metrics:
@@ -150,7 +129,6 @@ def plot_vad_results(results: Dict[str, Dict[str, float]], output_dir: Path):
     print(f" Saved: vad_performance_vs_snr.png")
     plt.close()
     
-    # Bar plot comparison
     fig, ax = plt.subplots(figsize=(12, 6))
     
     x = np.arange(len(snr_levels))
@@ -186,7 +164,6 @@ def print_results(results: Dict[str, Dict[str, float]]):
         for metric, value in metrics.items():
             print(f"  {metric.capitalize():12s}: {value:.4f}")
     
-    # Average across all SNRs
     print(f"\n{'='*70}")
     print(" Average Across All SNRs:")
     print(f"{'='*70}")
@@ -284,7 +261,6 @@ def main():
     print(f"  Min speech:      {args.min_speech} frames")
     print(f"  Min silence:     {args.min_silence} frames")
     
-    # Create VAD detector
     vad_config = EnergyZCRVADConfig(
         energy_thresh_ratio=args.energy_thresh,
         zcr_max_speech=args.zcr_max,
@@ -295,7 +271,6 @@ def main():
     )
     vad_detector = EnergyZCRVAD(vad_config)
     
-    # Evaluate for each SNR
     all_results: Dict[str, Dict[str, float]] = {}
     
     for snr_db in args.snr_levels:
@@ -308,16 +283,13 @@ def main():
         )
         all_results[str(snr_db)] = metrics
     
-    # Save results
     results_path = output_dir / "vad_energy_zcr_metrics.json"
     with open(results_path, 'w') as f:
         json.dump(all_results, f, indent=2)
     print(f"\n Results saved to: {results_path}")
     
-    # Generate plots
     plot_vad_results(all_results, output_dir)
     
-    # Print summary
     print_results(all_results)
     
     print(f"\n All results saved to: {output_dir}")

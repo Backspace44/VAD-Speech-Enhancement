@@ -47,7 +47,7 @@ def istft(S: np.ndarray, hop_length: int | None = None, win_length: int | None =
     S = S.T
     num_frames = S.shape[0]
     window = np.hanning(win_length).astype(np.float32)
-    # Use n_fft for irfft to match forward STFT, then extract win_length samples
+    # Match forward STFT length.
     frames_full = np.fft.irfft(S, n=n_fft, axis=1).astype(np.float32)
     frames = frames_full[:, :win_length]
     frames *= window[None, :]
@@ -65,7 +65,6 @@ def istft(S: np.ndarray, hop_length: int | None = None, win_length: int | None =
         if length < len(y):
             y = y[:length]
         elif length > len(y):
-            # Pad with zeros to reach target length
             y = np.pad(y, (0, length - len(y)), mode='constant', constant_values=0)
     return y
 
@@ -106,11 +105,7 @@ def compute_complex_ratio_mask(
     eps: float = 1e-8,
     clip_value: float | None = 5.0,
 ) -> torch.Tensor:
-    """
-    Compute the complex ratio mask (CRM) that maps noisy STFT to clean STFT.
-
-    The returned tensor uses two channels: [real_mask, imaginary_mask].
-    """
+    """Compute a two-channel complex ratio mask."""
     noisy_real = noisy_complex.real
     noisy_imag = noisy_complex.imag
     clean_real = clean_complex.real
@@ -139,20 +134,7 @@ def compute_stft(
     win_length: int = None,
     return_complex: bool = False
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Compute STFT and return magnitude and phase tensors.
-    
-    Args:
-        audio: Input audio tensor [B, T] or [T]
-        n_fft: FFT size (default: config.N_FFT)
-        hop_length: Hop length (default: config.HOP_LEN)
-        win_length: Window length (default: config.FRAME_LEN)
-        return_complex: Return complex spectrogram instead of mag/phase
-        
-    Returns:
-        If return_complex=False: (magnitude, phase) tensors [B, F, T] or [F, T]
-        If return_complex=True: complex_spectrogram tensor
-    """
+    """Compute STFT as complex or magnitude/phase tensors."""
     if n_fft is None:
         n_fft = config.N_FFT
     if hop_length is None:
@@ -202,20 +184,7 @@ def inverse_stft(
     win_length: int = None,
     length: int = None
 ) -> torch.Tensor:
-    """
-    Inverse STFT from magnitude and phase tensors.
-    
-    Args:
-        magnitude: Magnitude tensor [B, F, T] or [F, T]
-        phase: Phase tensor [B, F, T] or [F, T]
-        n_fft: FFT size (default: config.N_FFT)
-        hop_length: Hop length (default: config.HOP_LEN)
-        win_length: Window length (default: config.FRAME_LEN)
-        length: Target length for output (optional)
-        
-    Returns:
-        Reconstructed audio tensor [B, L] or [L]
-    """
+    """Reconstruct audio from magnitude and phase."""
     if n_fft is None:
         n_fft = config.N_FFT
     if hop_length is None:
@@ -257,12 +226,7 @@ def inverse_complex_stft(
     win_length: int = None,
     length: int = None,
 ) -> torch.Tensor:
-    """
-    Inverse STFT directly from a complex spectrogram tensor.
-
-    Args:
-        complex_spectrogram: Complex tensor [B, F, T] or [F, T]
-    """
+    """Reconstruct audio from a complex spectrogram."""
     if n_fft is None:
         n_fft = config.N_FFT
     if hop_length is None:

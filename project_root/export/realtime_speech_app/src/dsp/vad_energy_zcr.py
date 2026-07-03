@@ -1,13 +1,4 @@
-"""
-Adaptive Voice Activity Detection using energy, ZCR, and spectral cues.
-
-This module keeps the original EnergyZCRVAD public API for compatibility,
-but the detector is now more robust through:
-- adaptive log-energy normalization
-- speech-band energy ratio
-- spectral flatness based noise rejection
-- score-based hysteresis and hangover smoothing
-"""
+"""Adaptive VAD using energy, ZCR, and spectral cues."""
 
 from dataclasses import dataclass
 import numpy as np
@@ -23,13 +14,13 @@ class EnergyZCRVADConfig:
     frame_len: int = config.FRAME_LEN
     hop_len: int = config.HOP_LEN
 
-    # Legacy-compatible parameters.
+    # Legacy knobs.
     energy_thresh_ratio: float = 0.25
     zcr_max_speech: float = 0.2
     min_speech_frames: int = 3
     min_silence_frames: int = 4
 
-    # New adaptive detector controls.
+    # Adaptive controls.
     speech_start_threshold: float = 0.70
     speech_end_threshold: float = 0.54
     energy_weight: float = 0.45
@@ -240,15 +231,7 @@ class EnergyZCRVAD:
         return score.astype(np.float32), features
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        """
-        Detect voice activity in audio signal.
-
-        Args:
-            x: Audio signal (mono or stereo)
-
-        Returns:
-            Binary VAD labels (1=speech, 0=silence) per frame
-        """
+        """Return binary speech labels per frame."""
         score, features = self.compute_scores(x)
         if len(score) == 0:
             return np.zeros(0, dtype=np.int32)
@@ -256,13 +239,7 @@ class EnergyZCRVAD:
         return self._decode_labels(score, features['energy_score'])
 
     def predict_soft(self, x: np.ndarray) -> np.ndarray:
-        """
-        Estimate soft speech confidence per frame in the range [0, 1].
-
-        The score keeps the adaptive detector confidence while nudging
-        confirmed speech frames upward so training can use a soft gate
-        instead of hard-zeroing uncertain regions.
-        """
+        """Return soft speech confidence per frame."""
         score, features = self.compute_scores(x)
         if len(score) == 0:
             return np.zeros(0, dtype=np.float32)
@@ -293,9 +270,7 @@ def evaluate_vad_on_pair(
     vad_true: np.ndarray,
     vad_model: EnergyZCRVAD | None = None
 ) -> dict:
-    """
-    Evaluate VAD performance on a single audio file.
-    """
+    """Evaluate VAD on one audio file."""
     if vad_model is None:
         vad_model = EnergyZCRVAD()
     vad_pred = vad_model.predict(x)

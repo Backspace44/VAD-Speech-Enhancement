@@ -1,7 +1,4 @@
-"""
-Optimized Dataset class for speech enhancement with efficient data loading.
-Supports parallel loading with num_workers and various preprocessing options.
-"""
+"""Dataset and dataloader helpers for speech enhancement."""
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -25,32 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SpeechEnhancementDataset(Dataset):
-    """
-    Optimized dataset for speech enhancement training.
-    
-    Features:
-    - Efficient parallel loading with num_workers
-    - On-the-fly STFT computation
-    - Optional on-the-fly clean+noise mixing
-    - Optional data augmentation
-    - Flexible preprocessing
-    - Memory-efficient file loading
-    - Caching support for small datasets
-    
-    Args:
-        clean_dir: Directory containing clean audio files
-        noisy_dir: Directory containing noisy audio files (legacy/evaluation mode)
-        noise_dir: Directory containing noise-only audio files (on-the-fly mixing)
-        sample_rate: Target sample rate (default: 16000)
-        n_fft: FFT size for STFT (default: 512 = config.N_FFT)
-        hop_length: Hop length for STFT (default: 160 = config.HOP_LEN)
-        win_length: Window length for STFT (default: 400 = config.FRAME_LEN)
-        max_length: Maximum audio length in samples (None = no limit)
-        augmentation: Data augmentation function
-        preprocessing: Audio preprocessing function
-        cache_in_memory: Cache all data in memory (for small datasets)
-        return_audio: Return audio waveforms (for evaluation)
-    """
+    """Load clean/noisy or clean/noise pairs for training."""
     
     def __init__(
         self,
@@ -141,7 +113,6 @@ class SpeechEnhancementDataset(Dataset):
                     f"(Clean: {len(clean_files_all)}, Noisy: {len(noisy_files_all)})"
                 )
         
-        # Limit number of samples if max_samples is set
         if max_samples is not None and max_samples < len(self.clean_files):
             self.clean_files = self.clean_files[:max_samples]
             if self.noisy_files:
@@ -160,20 +131,7 @@ class SpeechEnhancementDataset(Dataset):
         return len(self.clean_files)
     
     def __getitem__(self, idx: int) -> dict:
-        """
-        Get a single sample.
-        
-        Returns:
-            dict with keys:
-                - 'noisy_mag': Noisy magnitude spectrogram [1, freq, time]
-                - 'noisy_complex': Noisy complex STFT as real/imag channels [2, freq, time]
-                - 'clean_mag': Clean magnitude spectrogram [1, freq, time]
-                - 'complex_mask': Complex ratio mask target [2, freq, time]
-                - 'noisy_phase': Noisy phase spectrogram [freq, time]
-                - 'noisy_audio': Noisy waveform (if return_audio=True)
-                - 'clean_audio': Clean waveform (if return_audio=True)
-                - 'filename': File name
-        """
+        """Return one training sample."""
 
         if self.cache_in_memory and idx in self.cache:
             return self.cache[idx]
@@ -231,7 +189,7 @@ class SpeechEnhancementDataset(Dataset):
             noisy_audio = torch.from_numpy(noisy_audio).float()
         
 
-        # Compute complex spectrograms for clean and noisy.
+        # STFT features.
         clean_complex = compute_stft(
             clean_audio,
             n_fft=self.n_fft,
@@ -259,13 +217,12 @@ class SpeechEnhancementDataset(Dataset):
         )
         noise_mag = noise_complex.abs()
         
-        # Add channel dimension
         clean_mag = clean_mag.unsqueeze(0)
         noisy_mag = noisy_mag.unsqueeze(0)
         noise_mag = noise_mag.unsqueeze(0)
         noisy_complex_channels = complex_to_channels(noisy_complex)
         
-        # Compute Ideal Ratio Mask (IRM): clean / (clean + noise)
+        # IRM target.
         eps = 1e-8
         ideal_mask = clean_mag / (clean_mag + noise_mag + eps)
         ideal_mask = torch.clamp(ideal_mask, 0.0, 1.0)
@@ -276,33 +233,28 @@ class SpeechEnhancementDataset(Dataset):
             clip_value=self.complex_mask_clip,
         )
         
-        # Apply VAD labels if available (force mask to 0 in silence regions)
+        # Optional VAD gate.
         vad_gate = None
         if self.use_vad_labels and self.vad_dir:
             vad_labels = self._load_vad_labels(idx, frame_start=crop_start // self.hop_length)
             if vad_labels is not None:
-                # VAD labels are frame-level, align with spectrogram time frames
                 vad_tensor = torch.from_numpy(vad_labels).float()
-                # Ensure VAD matches spectrogram time dimension
+                # Align to STFT frames.
                 if len(vad_tensor) != ideal_mask.shape[-1]:
-                    # Interpolate or pad/trim to match
                     if len(vad_tensor) > ideal_mask.shape[-1]:
                         vad_tensor = vad_tensor[:ideal_mask.shape[-1]]
                     else:
-                        # Pad with last value
                         padding = ideal_mask.shape[-1] - len(vad_tensor)
                         vad_tensor = torch.cat([vad_tensor, vad_tensor[-1].repeat(padding)])
                 
                 vad_tensor = torch.clamp(vad_tensor, 0.0, 1.0)
 
-                # Soft label sets are treated as frame confidence and keep a small
-                # floor so uncertain speech is attenuated rather than erased.
+                # Soft labels act as confidence gates.
                 if torch.is_floating_point(vad_tensor) and not torch.all((vad_tensor == 0) | (vad_tensor == 1)):
                     vad_gate = self.vad_soft_mask_floor + (1.0 - self.vad_soft_mask_floor) * vad_tensor
                 else:
                     vad_gate = vad_tensor
 
-                # Shape: [1, freq, time] * [time] -> broadcast over freq dimension
                 ideal_mask = ideal_mask * vad_gate.view(1, 1, -1)
                 complex_mask = complex_mask * vad_gate.view(1, 1, -1)
         
@@ -387,11 +339,7 @@ class SpeechEnhancementDataset(Dataset):
 
 
 def collate_fn_pad(batch):
-    """
-    Custom collate function to handle variable-length spectrograms.
-    Pads all spectrograms to max length in batch.
-    Optionally includes audio if present in samples.
-    """
+    """Pad variable-length spectrograms in a batch."""
     max_time = max(item['noisy_mag'].shape[-1] for item in batch)
     
     batch_noisy_mag = []
@@ -402,7 +350,6 @@ def collate_fn_pad(batch):
     batch_noisy_phase = []
     filenames = []
     
-    # Check if audio is present in first sample
     has_audio = 'noisy_audio' in batch[0]
     if has_audio:
         batch_noisy_audio = []
@@ -434,7 +381,6 @@ def collate_fn_pad(batch):
         batch_noisy_phase.append(noisy_phase)
         filenames.append(item['filename'])
         
-        # Collect audio if present
         if has_audio:
             batch_noisy_audio.append(item['noisy_audio'])
             batch_clean_audio.append(item['clean_audio'])
@@ -449,7 +395,6 @@ def collate_fn_pad(batch):
         'filename': filenames
     }
     
-    # Add audio tensors if present (already same length from dataset)
     if has_audio:
         result['noisy_audio'] = torch.stack(batch_noisy_audio)
         result['clean_audio'] = torch.stack(batch_clean_audio)
@@ -483,29 +428,7 @@ def create_dataloaders(
     snr_range: Tuple[float, float] = (0.0, 20.0),
     random_seed: int = 0,
 ) -> Tuple[DataLoader, DataLoader]:
-    """
-    Create optimized train and validation dataloaders.
-    
-    Args:
-        train_clean_dir: Training clean audio directory
-        train_noise_dir: Training noise audio directory for on-the-fly mixing
-        val_clean_dir: Validation clean audio directory
-        val_noise_dir: Validation noise audio directory for deterministic on-the-fly mixing
-        batch_size: Batch size
-        num_workers: Number of data loading workers
-        sample_rate: Target sample rate
-        n_fft: FFT size
-        hop_length: Hop length
-        win_length: Window length
-        max_length: Maximum audio length
-        use_augmentation: Enable data augmentation
-        use_preprocessing: Enable preprocessing
-        pin_memory: Pin memory for faster GPU transfer
-        prefetch_factor: Number of batches to prefetch per worker
-        
-    Returns:
-        train_loader, val_loader
-    """
+    """Create train and validation dataloaders."""
     
 
     augmentation = None
@@ -516,7 +439,6 @@ def create_dataloaders(
             logger.warning(f"Augmentation init failed: {e}. Disabling augmentation.")
             augmentation = None
     
-    # Initialize preprocessing if enabled
     preprocessing = None
     if use_preprocessing:
         try:
@@ -585,10 +507,8 @@ def create_dataloaders(
         collate_fn=collate_fn_pad
     )
     
-    # Calculate validation workers separately to avoid errors when num_workers=1
     val_workers = num_workers // 2 if num_workers > 0 else 0
     
-    # Build val_loader kwargs conditionally based on val_workers
     val_loader_kwargs = {
         'batch_size': batch_size,
         'shuffle': False,
@@ -598,7 +518,6 @@ def create_dataloaders(
         'collate_fn': collate_fn_pad
     }
     
-    # Only add prefetch_factor and persistent_workers if val_workers > 0
     if val_workers > 0:
         val_loader_kwargs['prefetch_factor'] = prefetch_factor
         val_loader_kwargs['persistent_workers'] = True

@@ -1,9 +1,4 @@
-"""
-Generate VAD labels for LibriSpeech dataset.
-
-This script generates VAD labels by applying the adaptive VAD detector
-on clean speech and saving them as .npy files named after each clean utterance.
-"""
+"""Generate LibriSpeech VAD label files."""
 
 from pathlib import Path
 from typing import Dict
@@ -19,15 +14,7 @@ _REPORTED_RESAMPLES: set[Path] = set()
 
 
 def _build_clean_index(split: str) -> Dict[str, Path]:
-    """
-    Build index mapping utterance_id -> clean file path for LibriSpeech.
-    
-    Args:
-        split: Dataset split ('train', 'val', 'test')
-    
-    Returns:
-        Dictionary mapping utterance IDs to clean .flac file paths
-    """
+    """Map utterance IDs to clean files."""
     clean_root = config.LIBRISPEECH_ROOT / "clean" / split
     index: Dict[str, Path] = {}
     for p in clean_root.rglob("*.flac"):
@@ -64,22 +51,7 @@ def generate_vad_labels_for_split(
     skip_existing: bool = True,
     max_files: int | None = None,
 ) -> None:
-    """
-    Generate VAD labels for all clean files in a LibriSpeech split.
-    
-    Process:
-      1. Enumerate clean LibriSpeech utterances
-      2. Apply VAD detector on clean speech
-      3. Save binary labels or soft speech scores as .npy files named by clean stem
-    
-    Args:
-        split: Dataset split ('train', 'val', 'test')
-        vad_model: VAD detector to use (default: adaptive detector with default config)
-        verbose: Print progress messages
-    
-    Saves:
-        VAD labels to vad_labels/<label_set>/<split>/<clean_stem>.npy
-    """
+    """Generate VAD labels for one LibriSpeech split."""
     if vad_model is None:
         vad_model = EnergyZCRVAD()
     
@@ -119,7 +91,6 @@ def generate_vad_labels_for_split(
         clean, sr_c = sf.read(clean_path)
         clean = _resample_if_needed(clean, sr_c, sr_target, clean_path, verbose)
         
-        # Generate VAD labels using the adaptive detector
         if label_mode == "soft":
             vad = vad_model.predict_soft(clean).astype(np.float32)
         else:
@@ -146,14 +117,7 @@ def generate_vad_labels_all_splits(
     skip_existing: bool = True,
     max_files: int | None = None,
 ) -> None:
-    """
-    Generate VAD labels for all LibriSpeech splits.
-    
-    Args:
-        splits: Tuple of split names to process
-        vad_config: VAD configuration (default: adaptive detector defaults)
-        verbose: Print progress messages
-    """
+    """Generate VAD labels for selected splits."""
     vad_model = EnergyZCRVAD(vad_config)
     
     if verbose:
@@ -180,7 +144,7 @@ def generate_vad_labels_all_splits(
 
 
 def main() -> None:
-    """Generate VAD labels with default configuration."""
+    """Generate VAD labels."""
     import argparse
     
     parser = argparse.ArgumentParser(
@@ -261,7 +225,6 @@ def main() -> None:
     
     args = parser.parse_args()
     
-    # Create custom VAD config from arguments
     vad_config = EnergyZCRVADConfig(
         energy_thresh_ratio=args.energy_thresh,
         zcr_max_speech=args.zcr_max,

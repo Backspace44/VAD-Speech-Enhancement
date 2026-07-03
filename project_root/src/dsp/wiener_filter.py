@@ -13,9 +13,7 @@ def estimate_noise_psd(S_noisy: np.ndarray, num_noise_frames: int = 6) -> np.nda
     return noise_psd
 
 def wiener_filter_stft(S_noisy: np.ndarray, noise_psd: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-    Wiener filtering using an internally estimated stationary noise profile.
-    """
+    """Apply Wiener filtering."""
     mag, phase = stft_utils.mag_phase(S_noisy)
     if noise_psd.shape[1] == 1:
         noise_psd = np.repeat(noise_psd, mag.shape[1], axis=1)
@@ -31,7 +29,6 @@ def enhance_waveform(noisy: np.ndarray) -> np.ndarray:
         noisy = np.mean(noisy, axis=1)
     noisy = noisy.astype(np.float32)
     
-    # Use Torch STFT for consistency with model-based methods
     noisy_tensor = torch.from_numpy(noisy).float()
     noisy_mag, noisy_phase = stft_utils.compute_stft(
         noisy_tensor,
@@ -40,16 +37,13 @@ def enhance_waveform(noisy: np.ndarray) -> np.ndarray:
         win_length=config.FRAME_LEN
     )
     
-    # Convert to complex spectrogram for compatibility with existing functions
     S_noisy = noisy_mag.numpy() * np.exp(1j * noisy_phase.numpy())
     noise_psd = estimate_noise_psd(S_noisy)
     S_enh = wiener_filter_stft(S_noisy, noise_psd)
     
-    # Extract magnitude and phase from enhanced complex spectrogram
     mag_enh = np.abs(S_enh)
     phase_enh = np.angle(S_enh)
     
-    # Use Torch ISTFT for reconstruction
     mag_enh_tensor = torch.from_numpy(mag_enh).float()
     phase_enh_tensor = torch.from_numpy(phase_enh).float()
     enhanced_tensor = stft_utils.inverse_stft(

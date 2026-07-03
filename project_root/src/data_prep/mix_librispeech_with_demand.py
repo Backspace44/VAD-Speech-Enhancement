@@ -11,11 +11,7 @@ RNG_SEED = 0
 _REPORTED_RESAMPLES: set[Path] = set()
 
 def _list_clean_flacs(split: str) -> list[Path]:
-    """
-    Return all LibriSpeech clean .flac files for a given split,
-    searching recursively under data/librispeech_demand/clean/<split>/.
-    Exemplu din structura ta: clean/test/test-clean/61/70968/61-70968-0000.flac
-    """
+    """List clean LibriSpeech files for a split."""
     clean_root = config.LIBRISPEECH_ROOT / "clean" / split
     files = sorted(clean_root.rglob("*.flac"))
     if not files:
@@ -23,10 +19,7 @@ def _list_clean_flacs(split: str) -> list[Path]:
     return files
 
 def _list_noise_wavs(split: str) -> list[Path]:
-    """
-    Return all DEMAND noise wav files for a given split,
-    searching recursively under data/librispeech_demand/noise/<split>/.
-    """
+    """List DEMAND noise files for a split."""
     noise_root = config.LIBRISPEECH_ROOT / "noise" / split
     files = sorted(noise_root.rglob("*.wav"))
     if not files:
@@ -48,7 +41,7 @@ def _resample_if_needed(sig: np.ndarray, sample_rate: int, target_sample_rate: i
     return resample_audio(sig, sample_rate, target_sample_rate)
 
 def _match_length(noise: np.ndarray, target_len: int, rng: np.random.Generator) -> np.ndarray:
-    """Repeat sau crop astfel încât len(noise) == target_len."""
+    """Repeat or crop noise to target length."""
     if len(noise) == target_len:
         return noise
     if len(noise) > target_len:
@@ -59,7 +52,7 @@ def _match_length(noise: np.ndarray, target_len: int, rng: np.random.Generator) 
     return tiled[:target_len]
 
 def _mix_at_snr(clean: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:
-    """Adaugă zgomot la SNR dorit (dB)."""
+    """Mix clean audio with noise at the requested SNR."""
     eps = 1e-12
     clean = clean.astype(np.float32)
     noise = noise.astype(np.float32)

@@ -196,21 +196,7 @@ class BiLSTMBlock(nn.Module):
 
 
 class MaskNet(nn.Module):
-    """
-    Advanced U-Net architecture for speech enhancement mask estimation.
-    
-    Features:
-    - U-Net encoder-decoder with skip connections
-    - Channel attention mechanisms
-    - Bidirectional LSTM for temporal modeling
-    - Multiple scales processing
-    
-    Args:
-        in_channels: Number of input channels (default: 1 for magnitude spectrogram)
-        base_channels: Base number of channels (default: 32)
-        use_lstm: Whether to use LSTM layers (default: True)
-        use_attention: Whether to use attention mechanisms (default: True)
-    """
+    """U-Net mask estimator for speech enhancement."""
     def __init__(
         self, 
         in_channels: int = 1, 
@@ -219,7 +205,7 @@ class MaskNet(nn.Module):
         use_attention: bool = True,
         use_residual: bool = False,
         use_depthwise: bool = False,
-        input_freq_bins: int = 257,  # Number of frequency bins in input spectrogram
+        input_freq_bins: int = 257,
         output_channels: int = 1,
         output_activation: str = "sigmoid",
         output_scale: float = 1.0,
@@ -260,7 +246,7 @@ class MaskNet(nn.Module):
         
 
         if self.use_lstm:
-            # After 4 downsample operations, frequency dimension is reduced by 2^4 = 16
+            # Four stride-2 downsamples.
             freq_after_downsample = input_freq_bins // 16
             lstm_input_size = (base_channels * 16) * freq_after_downsample
             self.lstm = BiLSTMBlock(lstm_input_size, base_channels * 8, num_layers=2)
@@ -296,15 +282,7 @@ class MaskNet(nn.Module):
         raise ValueError(f"Unknown output activation: {self.output_activation}")
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass.
-        
-        Args:
-            x: Input tensor of shape (batch, channels, freq, time)
-            
-        Returns:
-            Mask tensor of shape (batch, 1, freq, time)
-        """
+        """Return a speech enhancement mask."""
 
         x1, skip1 = self.enc1(x)
         x2, skip2 = self.enc2(x1)
@@ -337,7 +315,7 @@ class MaskNet(nn.Module):
 
 
 class SimpleMaskNet(nn.Module):
-    """Original simple MaskNet architecture (kept for backward compatibility)."""
+    """Simple MaskNet baseline."""
     def __init__(self, in_channels: int = 1, base_channels: int = 16):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, base_channels, kernel_size=3, padding=1)

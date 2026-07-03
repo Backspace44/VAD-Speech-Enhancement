@@ -1,9 +1,4 @@
-"""
-Project health check for the stage-0 upgrade.
-
-Usage:
-    python -m src.tools.healthcheck
-"""
+"""Project health check."""
 
 from __future__ import annotations
 

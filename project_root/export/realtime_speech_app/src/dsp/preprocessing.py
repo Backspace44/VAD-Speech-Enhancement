@@ -1,7 +1,4 @@
-"""
-Advanced Audio Preprocessing and Normalization for Speech Enhancement.
-Includes multiple normalization strategies, VAD-based processing, and quality checks.
-"""
+"""Audio preprocessing and normalization."""
 
 from __future__ import annotations
 from typing import Optional, Tuple, Dict, Any
@@ -14,7 +11,7 @@ from src import config
 
 
 class AudioNormalizer:
-    """Comprehensive audio normalization with multiple strategies."""
+    """Audio normalization helper."""
     
     def __init__(
         self,
@@ -22,14 +19,7 @@ class AudioNormalizer:
         target_level: float = -3.0,
         sample_rate: int = 16000
     ):
-        """
-        Initialize audio normalizer.
-        
-        Args:
-            method: Normalization method ('peak', 'rms', 'loudness', 'percentile')
-            target_level: Target level in dB (for RMS/loudness) or peak value
-            sample_rate: Audio sample rate
-        """
+        """Store normalization settings."""
         self.method = method
         self.target_level = target_level
         self.sample_rate = sample_rate
@@ -50,16 +40,7 @@ class AudioNormalizer:
         return self.methods[self.method](audio)
     
     def normalize_peak(self, audio: np.ndarray, target_peak: Optional[float] = None) -> np.ndarray:
-        """
-        Peak normalization - scale so maximum absolute value equals target.
-        
-        Args:
-            audio: Input audio signal
-            target_peak: Target peak value (default: 0.95 for headroom)
-            
-        Returns:
-            Normalized audio
-        """
+        """Scale audio to a target peak."""
         if target_peak is None:
             target_peak = 0.95
         
@@ -74,16 +55,7 @@ class AudioNormalizer:
         return normalized.astype(np.float32)
     
     def normalize_rms(self, audio: np.ndarray, target_db: Optional[float] = None) -> np.ndarray:
-        """
-        RMS (Root Mean Square) normalization - scale to target RMS level.
-        
-        Args:
-            audio: Input audio signal
-            target_db: Target RMS level in dB (default: -20 dB)
-            
-        Returns:
-            Normalized audio
-        """
+        """Scale audio to a target RMS level."""
         if target_db is None:
             target_db = self.target_level if self.target_level < 0 else -20.0
         
@@ -111,17 +83,7 @@ class AudioNormalizer:
         return normalized.astype(np.float32)
     
     def normalize_loudness(self, audio: np.ndarray, target_lufs: Optional[float] = None) -> np.ndarray:
-        """
-        Loudness normalization (ITU-R BS.1770 inspired).
-        Perceptually-weighted loudness measurement.
-        
-        Args:
-            audio: Input audio signal
-            target_lufs: Target loudness in LUFS (default: -23 LUFS)
-            
-        Returns:
-            Normalized audio
-        """
+        """Apply LUFS-style loudness normalization."""
         if target_lufs is None:
             target_lufs = -23.0
         
@@ -158,17 +120,7 @@ class AudioNormalizer:
         percentile: float = 95.0,
         target_level: float = 0.95
     ) -> np.ndarray:
-        """
-        Percentile-based normalization - more robust to outliers.
-        
-        Args:
-            audio: Input audio signal
-            percentile: Percentile to use (default: 95th percentile)
-            target_level: Target level for the percentile
-            
-        Returns:
-            Normalized audio
-        """
+        """Scale audio by a percentile level."""
         abs_audio = np.abs(audio)
         percentile_value = np.percentile(abs_audio, percentile)
         
@@ -184,15 +136,7 @@ class AudioNormalizer:
         return normalized.astype(np.float32)
     
     def normalize_zscore(self, audio: np.ndarray) -> np.ndarray:
-        """
-        Z-score normalization - zero mean, unit variance.
-        
-        Args:
-            audio: Input audio signal
-            
-        Returns:
-            Normalized audio
-        """
+        """Apply z-score normalization."""
         mean = np.mean(audio)
         std = np.std(audio)
         
@@ -218,7 +162,7 @@ class AudioNormalizer:
 
 
 class AudioPreprocessor:
-    """Comprehensive audio preprocessing pipeline."""
+    """Audio preprocessing pipeline."""
     
     def __init__(
         self,
@@ -233,21 +177,7 @@ class AudioPreprocessor:
         silence_threshold: float = 0.01,
         vad_based: bool = False
     ):
-        """
-        Initialize preprocessor.
-        
-        Args:
-            sample_rate: Target sample rate
-            normalize: Whether to apply normalization
-            normalization_method: Normalization strategy
-            remove_dc: Remove DC offset
-            preemphasis: Apply preemphasis filter
-            preemphasis_coef: Preemphasis coefficient (typical: 0.97)
-            apply_agc: Apply automatic gain control
-            trim_silence: Trim leading/trailing silence
-            silence_threshold: Threshold for silence detection (relative)
-            vad_based: Use VAD for processing
-        """
+        """Store preprocessing settings."""
         self.sample_rate = sample_rate
         self.normalize = normalize
         self.normalization_method = normalization_method
@@ -270,16 +200,7 @@ class AudioPreprocessor:
         audio: np.ndarray, 
         sr: Optional[int] = None
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Apply preprocessing pipeline.
-        
-        Args:
-            audio: Input audio signal
-            sr: Sample rate of input audio (if different from target)
-            
-        Returns:
-            Tuple of (preprocessed_audio, metadata_dict)
-        """
+        """Apply preprocessing and return metadata."""
         metadata = {'original_length': len(audio)}
         
 
@@ -341,18 +262,12 @@ class AudioPreprocessor:
         return audio - np.mean(audio)
     
     def apply_preemphasis(self, audio: np.ndarray, coef: float = 0.97) -> np.ndarray:
-        """
-        Apply preemphasis filter to boost high frequencies.
-        Formula: y[n] = x[n] - coef * x[n-1]
-        """
+        """Apply preemphasis."""
         emphasized = np.append(audio[0], audio[1:] - coef * audio[:-1])
         return emphasized
     
     def deemphasis(self, audio: np.ndarray, coef: float = 0.97) -> np.ndarray:
-        """
-        Reverse preemphasis filter.
-        Formula: y[n] = x[n] + coef * y[n-1]
-        """
+        """Reverse preemphasis."""
         deemphasized = np.zeros_like(audio)
         deemphasized[0] = audio[0]
         
@@ -366,16 +281,7 @@ class AudioPreprocessor:
         audio: np.ndarray, 
         threshold: float = 0.01
     ) -> Tuple[np.ndarray, Dict[str, int]]:
-        """
-        Trim silence from beginning and end.
-        
-        Args:
-            audio: Input audio
-            threshold: Relative threshold (0-1)
-            
-        Returns:
-            Tuple of (trimmed_audio, {start_trim, end_trim})
-        """
+        """Trim leading and trailing silence."""
 
         energy = audio ** 2
         
@@ -422,18 +328,7 @@ class AudioPreprocessor:
         release_time: float = 0.1,
         target_level: float = 0.5
     ) -> np.ndarray:
-        """
-        Apply automatic gain control (AGC) to maintain consistent volume.
-        
-        Args:
-            audio: Input audio
-            attack_time: Attack time in seconds
-            release_time: Release time in seconds
-            target_level: Target RMS level
-            
-        Returns:
-            Audio with AGC applied
-        """
+        """Apply automatic gain control."""
 
         frame_len = int(0.02 * self.sample_rate)
         hop_len = frame_len // 2
@@ -491,12 +386,7 @@ class AudioPreprocessor:
         return output
     
     def check_audio_quality(self, audio: np.ndarray) -> Dict[str, Any]:
-        """
-        Check audio quality and return diagnostic information.
-        
-        Returns:
-            Dictionary with quality metrics
-        """
+        """Return simple audio quality metrics."""
         quality = {}
         
 
@@ -562,15 +452,7 @@ class AudioPreprocessor:
 
 
 def create_preprocessor(config_dict: Optional[Dict[str, Any]] = None) -> AudioPreprocessor:
-    """
-    Create preprocessor from configuration dictionary.
-    
-    Args:
-        config_dict: Configuration dictionary
-        
-    Returns:
-        Configured AudioPreprocessor instance
-    """
+    """Build an AudioPreprocessor from config."""
     if config_dict is None:
         config_dict = {}
     

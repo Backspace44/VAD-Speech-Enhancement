@@ -1,7 +1,4 @@
-"""
-Training script for speech enhancement model.
-Usage: python train_mask_model.py --help
-"""
+"""Train the speech enhancement model."""
 
 import argparse
 import sys

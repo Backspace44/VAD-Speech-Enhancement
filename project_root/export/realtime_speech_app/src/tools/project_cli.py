@@ -1,6 +1,4 @@
-"""
-Unified CLI for the speech enhancement project.
-"""
+"""Project CLI."""
 
 from __future__ import annotations
 

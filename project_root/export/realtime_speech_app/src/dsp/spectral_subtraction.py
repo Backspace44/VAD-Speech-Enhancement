@@ -13,9 +13,7 @@ def estimate_noise_mag(S_noisy: np.ndarray, num_noise_frames: int = 6) -> np.nda
     return noise_mag
 
 def spectral_subtraction(S_noisy: np.ndarray, noise_mag: np.ndarray, alpha: float = 1.0, beta: float = 0.02) -> np.ndarray:
-    """
-    Spectral subtraction using an internally estimated stationary noise profile.
-    """
+    """Apply spectral subtraction."""
     mag, phase = stft_utils.mag_phase(S_noisy)
     if noise_mag.shape[1] == 1:
         noise_mag = np.repeat(noise_mag, mag.shape[1], axis=1)
@@ -30,7 +28,6 @@ def enhance_waveform(noisy: np.ndarray, alpha: float = 1.0, beta: float = 0.02) 
         noisy = np.mean(noisy, axis=1)
     noisy = noisy.astype(np.float32)
     
-    # Use Torch STFT for consistency with model-based methods
     noisy_tensor = torch.from_numpy(noisy).float()
     noisy_mag, noisy_phase = stft_utils.compute_stft(
         noisy_tensor,
@@ -39,16 +36,13 @@ def enhance_waveform(noisy: np.ndarray, alpha: float = 1.0, beta: float = 0.02) 
         win_length=config.FRAME_LEN
     )
     
-    # Convert to complex spectrogram for compatibility with existing functions
     S_noisy = noisy_mag.numpy() * np.exp(1j * noisy_phase.numpy())
     noise_mag = estimate_noise_mag(S_noisy)
     S_enh = spectral_subtraction(S_noisy, noise_mag, alpha=alpha, beta=beta)
     
-    # Extract magnitude and phase from enhanced complex spectrogram
     mag_enh = np.abs(S_enh)
     phase_enh = np.angle(S_enh)
     
-    # Use Torch ISTFT for reconstruction
     mag_enh_tensor = torch.from_numpy(mag_enh).float()
     phase_enh_tensor = torch.from_numpy(phase_enh).float()
     enhanced_tensor = stft_utils.inverse_stft(

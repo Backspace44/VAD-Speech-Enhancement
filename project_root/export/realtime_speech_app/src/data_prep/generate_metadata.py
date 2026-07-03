@@ -1,7 +1,4 @@
-"""
-Generate metadata files for LibriSpeech and VoiceBank datasets.
-Extracts information about clean-noisy mappings, SNR, noise types, durations.
-"""
+"""Generate dataset metadata JSON files."""
 
 import json
 import re
@@ -24,11 +21,7 @@ except ImportError:
 
 
 def extract_snr_from_filename(filename: str) -> Optional[float]:
-    """
-    Extract SNR value from filename.
-    Examples: '1089-134686-0000_snr0dB.wav' -> 0.0
-              'p232_001_snr15dB.wav' -> 15.0
-    """
+    """Extract SNR value from a filename."""
     match = re.search(r'snr(-?\d+)dB', filename)
     if match:
         return float(match.group(1))
@@ -36,10 +29,7 @@ def extract_snr_from_filename(filename: str) -> Optional[float]:
 
 
 def extract_noise_type_from_filename(filename: str) -> Optional[str]:
-    """
-    Extract noise type from filename if present.
-    Example: 'file_TBUS_snr0dB.wav' -> 'TBUS'
-    """
+    """Extract noise type from a filename."""
     match = re.search(r'_(T[A-Z]+|[A-Z]+_16k)_', filename)
     if match:
         return match.group(1).replace('_16k', '')
@@ -75,10 +65,7 @@ def get_audio_info(filepath: Path) -> Dict:
 
 
 def find_clean_match(noisy_file: Path, clean_files: List[Path]) -> Optional[Path]:
-    """
-    Find corresponding clean file for a noisy file.
-    Removes SNR and noise type suffixes to match.
-    """
+    """Find the clean file for a noisy file."""
     noisy_stem = noisy_file.stem
     
     base_name = re.sub(r'_snr-?\d+dB.*', '', noisy_stem)
@@ -93,16 +80,7 @@ def find_clean_match(noisy_file: Path, clean_files: List[Path]) -> Optional[Path
 
 
 def generate_librispeech_metadata(split: str = 'train', data_root: Path = None) -> Dict:
-    """
-    Generate metadata for LibriSpeech-DEMAND dataset.
-    
-    Args:
-        split: 'train', 'test', or 'val'
-        data_root: Root data directory
-        
-    Returns:
-        Dictionary with metadata for each noisy file
-    """
+    """Generate LibriSpeech-DEMAND metadata."""
     if data_root is None:
         data_root = Path(__file__).resolve().parent.parent.parent / "data"
     
@@ -152,16 +130,7 @@ def generate_librispeech_metadata(split: str = 'train', data_root: Path = None) 
 
 
 def generate_voicebank_metadata(split: str = 'train', data_root: Path = None) -> Dict:
-    """
-    Generate metadata for VoiceBank-DEMAND dataset.
-    
-    Args:
-        split: 'train' or 'test'
-        data_root: Root data directory
-        
-    Returns:
-        Dictionary with metadata for each noisy file
-    """
+    """Generate VoiceBank-DEMAND metadata."""
     if data_root is None:
         data_root = Path(__file__).resolve().parent.parent.parent / "data"
     
@@ -264,7 +233,7 @@ def save_metadata(metadata: Dict, output_path: Path, stats: Dict = None):
 
 
 def main():
-    """Main function to generate all metadata files."""
+    """Generate metadata files."""
     parser = argparse.ArgumentParser(description='Generate metadata for datasets')
     parser.add_argument('--dataset', type=str, choices=['librispeech', 'voicebank', 'both'], 
                        default='both', help='Which dataset to process')

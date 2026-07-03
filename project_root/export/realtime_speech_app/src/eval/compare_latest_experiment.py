@@ -1,7 +1,4 @@
-"""
-Compare the latest experiment checkpoint against a reference checkpoint.
-Useful right after training a new model run.
-"""
+"""Compare the latest checkpoint against a reference."""
 
 from __future__ import annotations
 

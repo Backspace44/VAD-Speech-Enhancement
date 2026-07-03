@@ -1,18 +1,4 @@
-"""
-Demo script for project presentation - showcases all functionalities.
-
-This script demonstrates:
-1. Voice Activity Detection (Energy+ZCR)
-2. Classical enhancement methods (Spectral Subtraction, Wiener Filter)
-3. Deep learning enhancement (MaskNet)
-4. Performance metrics (PESQ, STOI, SNR)
-5. Visualization of results
-
-Optimized for fast execution on low-spec laptops (processes 1-2 files only).
-
-Usage:
-    python demo.py --checkpoint checkpoints/masknet_best.pth
-"""
+"""Quick demo for VAD, enhancement, metrics, plots, and audio export."""
 
 import argparse
 from pathlib import Path
@@ -32,11 +18,10 @@ from src import config
 
 
 def load_demo_file(test_dir: Path, max_duration: float = 3.0):
-    """Load a short clean/noisy pair for demo (< 3 seconds for speed)."""
+    """Load a short clean/noisy demo pair."""
     clean_dir = test_dir / "clean"
     noisy_dir = test_dir / "noisy"
     
-    # Find short files
     for clean_path in sorted(clean_dir.glob("*.wav"))[:10]:
         noisy_path = noisy_dir / clean_path.name
         if not noisy_path.exists():
@@ -47,7 +32,6 @@ def load_demo_file(test_dir: Path, max_duration: float = 3.0):
             noisy, _ = load_audio_mono(noisy_path)
             return clean, noisy, clean_path.name, sr
     
-    # Fallback: truncate first file
     clean_path = sorted(clean_dir.glob("*.wav"))[0]
     noisy_path = noisy_dir / clean_path.name
     clean, sr = load_audio_mono(clean_path)
@@ -58,7 +42,7 @@ def load_demo_file(test_dir: Path, max_duration: float = 3.0):
 
 
 def demo_vad(audio: np.ndarray, sr: int):
-    """Demonstrate Voice Activity Detection."""
+    """Run the VAD demo."""
     print("\n" + "="*70)
     print(" 1. VOICE ACTIVITY DETECTION (Energy + ZCR)")
     print("="*70)
@@ -78,7 +62,7 @@ def demo_vad(audio: np.ndarray, sr: int):
 
 
 def demo_enhancement(clean: np.ndarray, noisy: np.ndarray, model, device: torch.device):
-    """Demonstrate all enhancement methods."""
+    """Run the enhancement methods."""
     print("\n" + "="*70)
     print(" 2. SPEECH ENHANCEMENT METHODS")
     print("="*70)
@@ -107,14 +91,13 @@ def demo_metrics(clean: np.ndarray, results: dict, sr: int):
 
 def demo_visualization(clean: np.ndarray, noisy: np.ndarray, results: dict, 
                        vad_labels: np.ndarray, metrics_data: list, sr: int, output_dir: Path):
-    """Generate visualization plots."""
+    """Create demo plots."""
     print("\n" + "="*70)
     print(" 4. GENERATING VISUALIZATIONS")
     print("="*70)
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Plot 1: Waveforms
     fig, axes = plt.subplots(4, 1, figsize=(12, 10))
     time = np.arange(len(clean)) / sr
     
@@ -144,7 +127,6 @@ def demo_visualization(clean: np.ndarray, noisy: np.ndarray, results: dict,
     print("Saved: demo_waveforms.png")
     plt.close()
     
-    # Plot 2: VAD
     fig, ax = plt.subplots(figsize=(12, 4))
     frame_times = np.arange(len(vad_labels)) * config.HOP_LEN / sr
     ax.fill_between(frame_times, 0, vad_labels, alpha=0.3, color='green', label='Speech')
@@ -159,7 +141,6 @@ def demo_visualization(clean: np.ndarray, noisy: np.ndarray, results: dict,
     print("Saved: demo_vad.png")
     plt.close()
     
-    # Plot 3: Metrics
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
     
     methods = [m['Method'] for m in metrics_data]
@@ -192,7 +173,6 @@ def demo_visualization(clean: np.ndarray, noisy: np.ndarray, results: dict,
     print("Saved: demo_metrics.png")
     plt.close()
     
-    # Plot 4: Spectrograms
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     
     plot_data = [('Clean', clean), ('Noisy', noisy), 
@@ -233,7 +213,7 @@ def demo_audio_export(results: dict, sr: int, output_dir: Path):
 
 
 def main():
-    """Main demo function."""
+    """Run the demo."""
     parser = argparse.ArgumentParser(
         description='Demo script for project presentation'
     )
@@ -258,7 +238,6 @@ def main():
     
     args = parser.parse_args()
     
-    # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     test_dir = Path(args.test_dir)
     output_dir = Path(args.output_dir)
@@ -269,26 +248,22 @@ def main():
     print(f"Device: {device}")
     print(f"Output: {output_dir}")
     
-    # Load model
     print("\nLoading MaskNet model...")
     model = load_masknet_checkpoint(args.checkpoint, device)
     
     params = sum(p.numel() for p in model.parameters())
     print(f"Model loaded: {params:,} parameters")
     
-    # Load demo file
     print("\nLoading demo audio file (< 3 seconds for fast processing)...")
     clean, noisy, filename, sr = load_demo_file(test_dir)
     print(f"Loaded: {filename} ({len(clean)/sr:.2f}s, {sr}Hz)")
     
-    # Run demonstrations
     vad_labels = demo_vad(clean, sr)
     results = demo_enhancement(clean, noisy, model, device)
     metrics_data = demo_metrics(clean, results, sr)
     demo_visualization(clean, noisy, results, vad_labels, metrics_data, sr, output_dir)
     demo_audio_export(results, sr, output_dir)
     
-    # Summary
     print("\n" + "="*70)
     print(" DEMO COMPLETED SUCCESSFULLY!")
     print("="*70)

@@ -96,15 +96,15 @@ DATASET_CONFIG = {
     "val_split": 0.1,
     "test_split": 0.1,
     
-    # VAD labels for improved IRM calculation (LibriSpeech only)
-    "use_vad_labels": False,  # Set to True to apply VAD masking to IRM
+    # VAD labels
+    "use_vad_labels": False,  # apply VAD mask to IRM
     "vad_label_set": "adaptive_v1",
     "vad_soft_mask_floor": 0.15,
     "on_the_fly_snr_range": [0.0, 20.0],
 
-    "num_workers": 0,  # Set to 0 to avoid multiprocessing issues on Windows
+    "num_workers": 0,  # Windows-safe default
     "pin_memory": True,
-    "persistent_workers": False,  # Must be False when num_workers=0
+    "persistent_workers": False,  # requires num_workers > 0
     
 
     "pad_mode": "constant",
@@ -123,9 +123,9 @@ DATASET_CONFIG = {
 
 MODEL_CONFIG = {
     "in_channels": 1,
-    "base_channels": 16,  # Smaller model for faster training
+    "base_channels": 16,  # fast default
     "use_lstm": True,
-    "use_attention": False,  # Disable attention for speed
+    "use_attention": False,  # faster
     "use_residual": False,
     "use_depthwise": False,
     "output_channels": 1,
@@ -224,7 +224,7 @@ MODEL_VARIANTS = {
 }
 
 
-ACTIVE_MODEL_VARIANT = "tiny"  # Ultra-fast training with minimal model
+ACTIVE_MODEL_VARIANT = "tiny"  # fast default
 
 
 def set_active_model_variant(variant_name: str):
@@ -332,16 +332,16 @@ OPTIMIZER_PRESETS = {
 
 TRAINING_CONFIG = {
 
-    "batch_size": 8,  # Optimized for GTX 1050
-    "num_epochs": 1,  # Ultra-fast demo training
-    "num_workers": 0,  # Windows compatibility - avoid multiprocessing issues
+    "batch_size": 8,  # GTX 1050
+    "num_epochs": 1,  # demo run
+    "num_workers": 0,  # Windows-safe default
     "val_ratio": 0.1,
-    "use_augmentation": True,  # Enable audio augmentation by default
+    "use_augmentation": True,
     
     "learning_rate": 1e-3,
     "weight_decay": 1e-5,
 
-    "warmup_epochs": 2,  # Reduced warmup
+    "warmup_epochs": 2,
     "warmup_start_lr": 1e-6,
     
 
@@ -364,7 +364,7 @@ TRAINING_CONFIG = {
     "anneal_strategy": "cos",
     
 
-    "early_stopping_patience": 5,  # Reduced patience for shorter training
+    "early_stopping_patience": 5,
     "early_stopping_min_delta": 1e-4,
     "early_stopping_mode": "min",
     
@@ -587,7 +587,7 @@ LOSS_PRESETS = {
 
 
 AUGMENTATION_CONFIG = {
-    "enabled": False,  # Disabled for fast training
+    "enabled": False,  # fast training
     
 
     "random_gain": {
@@ -641,7 +641,7 @@ AUGMENTATION_CONFIG = {
 
 
 SPECAUGMENT_CONFIG = {
-    "enabled": False,  # Disabled for faster training
+    "enabled": False,  # faster training
     "prob": 0.5,
     "freq_mask_param": 15,
     "time_mask_param": 25,
@@ -853,13 +853,7 @@ def get_active_config():
 
 
 def apply_preset(preset_name: str, config_type: str = "training"):
-    """
-    Apply a preset configuration.
-    
-    Args:
-        preset_name: Name of the preset
-        config_type: Type of config ("training", "model", "optimizer", "loss", "experiment")
-    """
+    """Apply a named preset."""
     if config_type == "training":
         if preset_name in TRAINING_PRESETS:
             TRAINING_CONFIG.update(TRAINING_PRESETS[preset_name])

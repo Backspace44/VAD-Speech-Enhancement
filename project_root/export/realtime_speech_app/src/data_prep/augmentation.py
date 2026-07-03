@@ -1,7 +1,4 @@
-"""
-Advanced Data Augmentation for Speech Enhancement
-Implements multiple augmentation techniques for robust model training.
-"""
+"""Audio augmentation helpers."""
 
 from __future__ import annotations
 import numpy as np
@@ -14,31 +11,16 @@ logger = logging.getLogger(__name__)
 
 
 class AudioAugmentation:
-    """Comprehensive audio augmentation pipeline for speech enhancement."""
+    """Audio augmentation pipeline."""
     
     def __init__(self, config: Dict[str, Any], sample_rate: int = 16000):
-        """
-        Initialize augmentation pipeline.
-        
-        Args:
-            config: Augmentation configuration dictionary
-            sample_rate: Audio sample rate in Hz
-        """
+        """Store augmentation settings."""
         self.config = config
         self.sample_rate = sample_rate
         self.enabled = config.get("enabled", True)
         
     def __call__(self, audio: np.ndarray, is_training: bool = True) -> np.ndarray:
-        """
-        Apply augmentation pipeline to audio.
-        
-        Args:
-            audio: Input audio signal (1D numpy array)
-            is_training: Whether in training mode (augmentation only during training)
-            
-        Returns:
-            Augmented audio signal
-        """
+        """Apply enabled augmentations."""
         if not self.enabled or not is_training:
             return audio
             
@@ -82,13 +64,7 @@ class AudioAugmentation:
         return audio
     
     def random_gain(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Apply random gain/volume change.
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.5, "min_gain_db": -6, "max_gain_db": 6}
-        """
+        """Apply random gain."""
         min_gain_db = config.get("min_gain_db", -6)
         max_gain_db = config.get("max_gain_db", 6)
         
@@ -98,13 +74,7 @@ class AudioAugmentation:
         return audio * gain
     
     def add_noise(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Add random white/colored noise.
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.3, "snr_db_range": [5, 20], "noise_type": "white"}
-        """
+        """Add random noise."""
         snr_db_range = config.get("snr_db_range", [5, 20])
         noise_type = config.get("noise_type", "white")
         
@@ -134,20 +104,13 @@ class AudioAugmentation:
         return audio + noise
     
     def time_stretch(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Time stretching (change speed without changing pitch).
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.3, "rate_range": [0.9, 1.1]}
-        """
+        """Change speed without changing pitch."""
         rate_range = config.get("rate_range", [0.9, 1.1])
         rate = np.random.uniform(rate_range[0], rate_range[1])
         
 
         new_length = int(len(audio) / rate)
-        # Use resample_poly for better quality (avoid FFT artifacts)
-        # Since we need arbitrary length, we'll use the ratio-based approach
+        # Polyphase resampling.
         stretched = resample_poly(audio, new_length, len(audio))
         
 
@@ -158,13 +121,7 @@ class AudioAugmentation:
         return stretched
     
     def pitch_shift(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Pitch shifting (change pitch without changing duration).
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.2, "semitone_range": [-2, 2]}
-        """
+        """Change pitch without changing duration."""
         semitone_range = config.get("semitone_range", [-2, 2])
         semitones = np.random.uniform(semitone_range[0], semitone_range[1])
         
@@ -181,13 +138,7 @@ class AudioAugmentation:
         return final
     
     def apply_reverb(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Apply simple room reverb simulation.
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.3, "room_size": [0.1, 0.5], "damping": [0.3, 0.7]}
-        """
+        """Apply simple room reverb."""
         room_size_range = config.get("room_size", [0.1, 0.5])
         damping_range = config.get("damping", [0.3, 0.7])
         
@@ -211,13 +162,7 @@ class AudioAugmentation:
         return (1 - wet_dry) * audio + wet_dry * reverb_audio
     
     def random_eq(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Apply random equalization (frequency filtering).
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.4, "bands": 3, "gain_range_db": [-6, 6]}
-        """
+        """Apply random EQ."""
         num_bands = config.get("bands", 3)
         gain_range_db = config.get("gain_range_db", [-6, 6])
         
@@ -252,13 +197,7 @@ class AudioAugmentation:
         return result
     
     def dynamic_range_compression(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Apply dynamic range compression.
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.3, "threshold_db": -20, "ratio": 4, "attack": 0.005, "release": 0.1}
-        """
+        """Apply dynamic range compression."""
         threshold_db = config.get("threshold_db", -20)
         ratio = config.get("ratio", 4)
         attack_time = config.get("attack", 0.005)
@@ -297,13 +236,7 @@ class AudioAugmentation:
         return audio * gain
     
     def add_clipping(self, audio: np.ndarray, config: Dict) -> np.ndarray:
-        """
-        Add subtle clipping distortion.
-        
-        Args:
-            audio: Input audio
-            config: {"prob": 0.2, "threshold_range": [0.7, 0.95]}
-        """
+        """Add light clipping."""
         threshold_range = config.get("threshold_range", [0.7, 0.95])
         threshold = np.random.uniform(threshold_range[0], threshold_range[1])
         
@@ -364,12 +297,7 @@ class SpecAugment:
     """SpecAugment for spectrograms (frequency and time masking)."""
     
     def __init__(self, config: Dict[str, Any]):
-        """
-        Initialize SpecAugment.
-        
-        Args:
-            config: Configuration with freq_mask_param, time_mask_param, num_masks
-        """
+        """Store SpecAugment settings."""
         self.config = config
         self.enabled = config.get("enabled", True)
     
@@ -378,16 +306,7 @@ class SpecAugment:
         spectrogram: np.ndarray, 
         is_training: bool = True
     ) -> np.ndarray:
-        """
-        Apply SpecAugment to spectrogram.
-        
-        Args:
-            spectrogram: Input spectrogram (freq x time)
-            is_training: Whether in training mode
-            
-        Returns:
-            Augmented spectrogram
-        """
+        """Apply SpecAugment masks."""
         if not self.enabled or not is_training:
             return spectrogram
         
@@ -440,13 +359,7 @@ class MixupAugmentation:
     """Mixup augmentation for speech enhancement."""
     
     def __init__(self, alpha: float = 0.2, prob: float = 0.3):
-        """
-        Initialize Mixup augmentation.
-        
-        Args:
-            alpha: Beta distribution parameter
-            prob: Probability of applying mixup
-        """
+        """Store Mixup settings."""
         self.alpha = alpha
         self.prob = prob
     
@@ -456,17 +369,7 @@ class MixupAugmentation:
         batch_y: np.ndarray, 
         is_training: bool = True
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Apply mixup to a batch.
-        
-        Args:
-            batch_x: Input batch (B, ...)
-            batch_y: Target batch (B, ...)
-            is_training: Whether in training mode
-            
-        Returns:
-            Mixed batch_x, batch_y
-        """
+        """Apply Mixup to a batch."""
         if not is_training or np.random.rand() > self.prob:
             return batch_x, batch_y
         
@@ -488,17 +391,7 @@ class MixupAugmentation:
 
 
 def create_audio_augmenter(level: str = 'moderate', sample_rate: int = 16000, **kwargs) -> AudioAugmentation:
-    """
-    Create audio augmentation pipeline based on level.
-    
-    Args:
-        level: Augmentation level ('light', 'moderate', 'aggressive', 'none')
-        sample_rate: Sample rate (default: 16000)
-        **kwargs: Additional parameters (ignored for compatibility)
-        
-    Returns:
-        AudioAugmentation instance configured for the specified level
-    """
+    """Build an AudioAugmentation preset."""
     if level == 'none' or level is None:
         return None
     
@@ -542,18 +435,7 @@ def create_specaugment(
     num_freq_masks: int = 2,
     num_time_masks: int = 2
 ) -> SpecAugment:
-    """
-    Create SpecAugment instance with specified parameters.
-    
-    Args:
-        freq_mask_param: Maximum frequency mask size
-        time_mask_param: Maximum time mask size
-        num_freq_masks: Number of frequency masks to apply
-        num_time_masks: Number of time masks to apply
-        
-    Returns:
-        SpecAugment instance
-    """
+    """Build a SpecAugment instance."""
     return SpecAugment(
         freq_mask_param=freq_mask_param,
         time_mask_param=time_mask_param,
