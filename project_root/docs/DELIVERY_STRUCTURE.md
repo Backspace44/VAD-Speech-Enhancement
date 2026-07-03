@@ -1,64 +1,47 @@
-# Delivery Structure
+# Delivery Notes
 
-This project keeps generated artifacts out of source control, but it now uses a simple convention so the final deliverables are easy to identify.
+The source repository is intentionally small. It contains the code and the small
+assets needed to understand or rerun the project, but not the generated
+artifacts.
 
-## Main Folders
+## Kept In Git
 
-`src/`
-- Final source code for training, evaluation, DSP, VAD, and realtime demo.
+- source code under `src/`;
+- launch scripts and requirements;
+- small documentation files;
+- small static assets, such as the university logos.
 
-`checkpoints/`
-- Saved training runs and exported model checkpoints.
-- Recommended final LibriSpeech-trained checkpoint:
-  `librispeech_soft_vad_recommended_smoke/masknet_best.pth`
+## Kept Locally
 
-`results/`
-- Evaluation reports, benchmark tables, VAD studies, demo recordings, and generated inventories.
+These folders are produced during development, training or demo runs and should
+stay outside source control:
 
-`logs/`
-- Runtime logs for training, evaluation, and realtime demo sessions.
+```text
+data/             datasets
+checkpoints/      trained models
+results/          metrics, plots, snapshots, recordings
+logs/             runtime logs
+export/           packaged/demo delivery copies
+```
 
-## Artifact Categories
+PDFs, LaTeX drafts and compiled presentation files are also kept outside
+`project_root` after cleanup.
 
-Checkpoint and results artifacts are classified into a few practical groups:
+## Useful Local Artifacts
 
-`official`
-- Main artifacts that should be cited in the thesis or demo.
+For the thesis presentation, the most useful local artifacts are:
 
-`benchmark`
-- Named comparison runs or benchmark reports that are still useful for analysis.
+- the final MaskNet checkpoint;
+- benchmark CSV/JSON files from `results/`;
+- saved audio examples;
+- UI snapshots from the realtime demo;
+- the generated presentation and speech PDFs, kept outside the repository.
 
-`smoke`
-- Short validation runs used during development.
-
-`demo`
-- Realtime demo audio, snapshots, and UI artifacts.
-
-`legacy`
-- Older historical runs kept for traceability.
-
-## Inventory Command
-
-Generate a machine-readable inventory with:
+To regenerate an artifact inventory locally:
 
 ```bash
 python -m src.tools.project_cli project-inventory
 ```
 
-This writes:
-
-- `results/project_inventory/artifact_inventory.csv`
-- `results/project_inventory/artifact_inventory.json`
-- `results/project_inventory/recommended_artifacts.csv`
-
-## Recommended Final Artifacts
-
-The current project-level references are:
-
-1. `checkpoints/librispeech_soft_vad_recommended_smoke/masknet_best.pth`
-2. `checkpoints/librispeech_fast_benchmark_smoke/masknet_best.pth`
-3. `results/final_benchmark_report_v2/benchmark_best_by_dataset.csv`
-4. `results/voicebank_quality_v2_vs_baseline/checkpoint_comparison.csv`
-5. `results/audio_samples/`
-
-These are the most useful artifacts to mention in the thesis, presentation, and demo workflow.
+The inventory output is useful for choosing what to present, but the generated
+files themselves should not be committed.
