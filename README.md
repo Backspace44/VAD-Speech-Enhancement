@@ -1,9 +1,13 @@
 # VAD-Speech-Enhancement
 
-Speech enhancement project for my bachelor thesis. The implementation lives in
-`project_root/` and includes the training code, DSP baselines, evaluation tools
-and the realtime demo.
+Proiect de licenta despre reducerea zgomotului din semnale vocale. Include VAD,
+metode DSP clasice si un model MaskNet antrenat pentru estimarea mastilor
+spectrale.
 
-The repository intentionally keeps large local artifacts out of Git:
-datasets, checkpoints, logs, generated results, PDFs and exported archives.
-See `project_root/README.md` for setup and usage notes.
+Codul principal este in `project_root/`: pregatire de date, antrenare,
+evaluare, demo offline si interfata real-time.
+
+In Git am pastrat doar codul si documentatia mica. Dataset-urile,
+checkpoint-urile, rezultatele generate, log-urile, PDF-urile si exporturile
+pentru demo raman local. Pentru instalare, comenzi si rezultate finale, vezi
+`project_root/README.md`.
