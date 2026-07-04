@@ -131,40 +131,95 @@ class RecordingSession:
 
     def __init__(self, sample_rate: int, output_dir: Path | None = None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        root = output_dir or (config.AUDIO_SAMPLES_DIR / f"realtime_demo_{timestamp}")
-        self.output_dir = Path(root)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.base_dir = Path(output_dir) if output_dir is not None else config.REALTIME_RECORDINGS_DIR
+        self.output_dir = self._create_session_dir(self.base_dir, timestamp)
         self.sample_rate = sample_rate
         self.raw_blocks: list[np.ndarray] = []
         self.enhanced_blocks: list[np.ndarray] = []
         self.enabled = False
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def _create_session_dir(base_dir: Path, timestamp: str) -> Path:
+        candidate = base_dir / f"realtime_demo_{timestamp}"
+        suffix = 1
+        while candidate.exists():
+            candidate = base_dir / f"realtime_demo_{timestamp}_{suffix:02d}"
+            suffix += 1
+        candidate.mkdir(parents=True, exist_ok=False)
+        return candidate
 
     def start(self) -> None:
-        self.enabled = True
+        with self.lock:
+            self.enabled = True
 
     def stop(self) -> None:
-        self.enabled = False
+        with self.lock:
+            self.enabled = False
 
     def toggle(self) -> bool:
-        self.enabled = not self.enabled
-        return self.enabled
+        with self.lock:
+            self.enabled = not self.enabled
+            return self.enabled
+
+    def is_enabled(self) -> bool:
+        with self.lock:
+            return self.enabled
+
+    def reset(self) -> tuple[tuple[Path, Path] | None, Path]:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        with self.lock:
+            old_dir = self.output_dir
+            raw_blocks = [np.copy(block) for block in self.raw_blocks]
+            enhanced_blocks = [np.copy(block) for block in self.enhanced_blocks]
+            self.raw_blocks.clear()
+            self.enhanced_blocks.clear()
+            self.output_dir = self._create_session_dir(self.base_dir, timestamp)
+            new_dir = self.output_dir
+        saved_paths = self._write_blocks(old_dir, raw_blocks, enhanced_blocks)
+        if saved_paths is None:
+            self._remove_empty_dir(old_dir)
+        return saved_paths, new_dir
 
     def add(self, raw_block: np.ndarray, enhanced_block: np.ndarray) -> None:
-        if not self.enabled:
-            return
-        self.raw_blocks.append(np.copy(raw_block))
-        self.enhanced_blocks.append(np.copy(enhanced_block))
+        with self.lock:
+            if not self.enabled:
+                return
+            self.raw_blocks.append(np.copy(raw_block))
+            self.enhanced_blocks.append(np.copy(enhanced_block))
 
     def save(self) -> tuple[Path, Path] | None:
-        if not self.raw_blocks or not self.enhanced_blocks:
+        with self.lock:
+            if not self.raw_blocks or not self.enhanced_blocks:
+                return None
+            raw_blocks = [np.copy(block) for block in self.raw_blocks]
+            enhanced_blocks = [np.copy(block) for block in self.enhanced_blocks]
+            output_dir = self.output_dir
+        return self._write_blocks(output_dir, raw_blocks, enhanced_blocks)
+
+    def _write_blocks(
+        self,
+        output_dir: Path,
+        raw_blocks: list[np.ndarray],
+        enhanced_blocks: list[np.ndarray],
+    ) -> tuple[Path, Path] | None:
+        if not raw_blocks or not enhanced_blocks:
             return None
-        raw_audio = np.concatenate(self.raw_blocks).astype(np.float32, copy=False)
-        enhanced_audio = np.concatenate(self.enhanced_blocks).astype(np.float32, copy=False)
-        raw_path = self.output_dir / "raw_microphone.wav"
-        enhanced_path = self.output_dir / "enhanced_output.wav"
+        raw_audio = np.concatenate(raw_blocks).astype(np.float32, copy=False)
+        enhanced_audio = np.concatenate(enhanced_blocks).astype(np.float32, copy=False)
+        raw_path = output_dir / "raw_microphone.wav"
+        enhanced_path = output_dir / "enhanced_output.wav"
         sf.write(raw_path, raw_audio, self.sample_rate)
         sf.write(enhanced_path, enhanced_audio, self.sample_rate)
         return raw_path, enhanced_path
+
+    @staticmethod
+    def _remove_empty_dir(path: Path) -> None:
+        try:
+            if path.exists() and path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+        except OSError:
+            pass
 
 
 class FileDemoSource:
@@ -460,12 +515,99 @@ def pick_best_device(kind: str, sample_rate: int) -> int | None:
     return best_index
 
 
+def _device_alias_rules(
+    requested: str,
+    kind: str,
+) -> list[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] | None:
+    alias = requested.lower().replace("_", "-").strip()
+    if kind == "input":
+        aliases = {
+            "parsec": [
+                (("parsec", "microphone"), ("parsec",), ("steam streaming", "mapper")),
+                (("parsec",), ("microphone",), ("steam streaming", "mapper")),
+            ],
+        }
+    else:
+        speaker_rules = [
+            (("high definition",), ("speakers", "default"), ("steam streaming", "mapper")),
+            (("hd audio",), ("speakers",), ("steam streaming", "mapper")),
+            (("speakers",), ("high definition",), ("steam streaming", "mapper")),
+        ]
+        aliases = {
+            "ath": [
+                (("ath", "headphones"), ("ath",), ("hands-free", "headset")),
+                (("ath",), ("headphones",), ("hands-free", "headset")),
+                (("headphones",), (), ("hands-free", "headset", "steam streaming", "mapper")),
+                (("ath", "headset"), ("ath",), ("steam streaming", "mapper")),
+            ],
+            "headphones": [
+                (("headphones",), (), ("hands-free", "headset", "steam streaming", "mapper")),
+                (("ath",), ("headphones",), ("hands-free", "headset")),
+            ],
+            "speakers": speaker_rules,
+            "speaker": speaker_rules,
+            "pc": speaker_rules,
+            "pc-speakers": speaker_rules,
+            "laptop": speaker_rules,
+            "laptop-speakers": speaker_rules,
+            "parsec-output": speaker_rules,
+            "stream": [
+                (("steam streaming speakers",), ("speakers",), ("microphone", "mapper")),
+                (("steam streaming",), ("speakers",), ("microphone", "mapper")),
+            ],
+        }
+    return aliases.get(alias)
+
+
+def _resolve_device_alias(requested: str, kind: str, sample_rate: int) -> int | None:
+    if sd is None:
+        return None
+    rules = _device_alias_rules(requested, kind)
+    if rules is None:
+        return None
+
+    devices = sd.query_devices()
+    channel_key = "max_input_channels" if kind == "input" else "max_output_channels"
+    best_index: int | None = None
+    best_score = float("-inf")
+    for priority, (required, preferred, avoided) in enumerate(rules):
+        priority_bonus = float(len(rules) - priority) * 100.0
+        for index, device in enumerate(devices):
+            if int(device[channel_key]) <= 0:
+                continue
+            name = str(device["name"]).lower()
+            if not all(token in name for token in required):
+                continue
+            score = priority_bonus + _score_device_candidate(
+                index,
+                device,
+                kind=kind,
+                sample_rate=sample_rate,
+            )
+            for token in preferred:
+                if token in name:
+                    score += 10.0
+            for token in avoided:
+                if token in name:
+                    score -= 20.0
+            if score > best_score:
+                best_score = score
+                best_index = index
+
+    if best_index is None:
+        LOGGER.warning("Audio device alias '%s' did not match a %s device", requested, kind)
+    return best_index
+
+
 def resolve_device(requested: str | None, kind: str, sample_rate: int) -> int | str | None:
     if requested is None:
         return pick_best_device(kind=kind, sample_rate=sample_rate)
     requested = str(requested).strip()
     if requested.isdigit():
         return int(requested)
+    alias_device = _resolve_device_alias(requested, kind=kind, sample_rate=sample_rate)
+    if alias_device is not None:
+        return alias_device
     return requested
 
 

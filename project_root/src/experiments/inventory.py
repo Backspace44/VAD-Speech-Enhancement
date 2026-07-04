@@ -39,7 +39,7 @@ def classify_result_artifact(name: str) -> tuple[str, str]:
     if name in OFFICIAL_RESULTS:
         return "official", OFFICIAL_RESULTS[name]
     lowered = name.lower()
-    if name == "audio_samples":
+    if name in {"audio_samples", "realtime_recordings"}:
         return "demo", "recorded_demo_audio"
     if "realtime" in lowered:
         return "demo", "realtime_demo_artifact"
@@ -106,7 +106,7 @@ def build_delivery_recommendations(root: Path) -> list[dict]:
         ),
         (
             "result",
-            "audio_samples",
+            "realtime_recordings",
             "Realtime demo recordings root",
         ),
     ]

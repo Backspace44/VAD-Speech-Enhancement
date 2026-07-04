@@ -20,7 +20,7 @@ RESULTS_DIR = ROOT / "results"
 LOGS_DIR = ROOT / "logs"
 TENSORBOARD_DIR = LOGS_DIR / "tensorboard"
 PLOTS_DIR = RESULTS_DIR / "plots"
-AUDIO_SAMPLES_DIR = RESULTS_DIR / "audio_samples"
+REALTIME_RECORDINGS_DIR = RESULTS_DIR / "realtime_recordings"
 
 
 def get_experiment_dir(experiment_name: str = None):
@@ -36,7 +36,7 @@ TRAINING_LOG_FILE = LOGS_DIR / f"training_{datetime.now().strftime('%Y%m%d_%H%M%
 EVAL_LOG_FILE = LOGS_DIR / f"evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
 
-for directory in [CHECKPOINTS_DIR, RESULTS_DIR, LOGS_DIR, TENSORBOARD_DIR, PLOTS_DIR, AUDIO_SAMPLES_DIR]:
+for directory in [CHECKPOINTS_DIR, RESULTS_DIR, LOGS_DIR, TENSORBOARD_DIR, PLOTS_DIR, REALTIME_RECORDINGS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 

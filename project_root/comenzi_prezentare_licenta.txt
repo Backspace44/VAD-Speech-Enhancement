@@ -1,0 +1,115 @@
+COMENZI PREZENTARE LICENTA
+
+[Intra in proiect]
+cd "D:\proiect licentiat\project_root"
+
+
+DEMO OFFLINE RAPID
+------------------
+
+[Ruleaza demo offline prin CLI]
+python -m src.tools.project_cli demo -- --checkpoint checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --test-dir data\voicebank_demand\test --output-dir demo_results
+
+[Ruleaza demo offline direct]
+python demo.py --checkpoint checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --test-dir data\voicebank_demand\test --output-dir demo_results
+
+[Deschide rezultatele demo]
+explorer demo_results
+
+[Deschide waveform]
+start demo_results\demo_waveforms.png
+
+[Deschide VAD]
+start demo_results\demo_vad.png
+
+[Deschide metrici]
+start demo_results\demo_metrics.png
+
+[Deschide spectrograme]
+start demo_results\demo_spectrograms.png
+
+
+DEMO REALTIME
+-------------
+
+[Listeaza device-uri audio]
+py -3.12 -m src.tools.realtime_demo --list-devices
+
+[Porneste realtime recomandat]
+launch_realtime_demo.cmd
+
+[Porneste realtime cu output laptop]
+launch_realtime_demo.cmd laptop
+
+[Porneste realtime cu output speakers]
+launch_realtime_demo.cmd speakers
+
+[Porneste realtime cu output casti ATH]
+launch_realtime_demo.cmd ath
+
+[Porneste realtime cu output streaming]
+launch_realtime_demo.cmd stream
+
+[Porneste realtime cu ID de output explicit]
+launch_realtime_demo.cmd 5
+
+[Porneste realtime manual cu profil stabil]
+py -3.12 -m src.tools.realtime_demo --method masknet --checkpoint checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --device cuda --visualize --record --dry-wet 1.0 --block-ms 512 --context-ms 2048 --tail-ms 64 --latency high --queue-size 256 --stats-interval 2 --display-ms 6000 --input-device parsec --output-device laptop --record-dir results\realtime_recordings --snapshot-dir results\realtime_snapshots
+
+[Porneste realtime manual pe casti ATH]
+py -3.12 -m src.tools.realtime_demo --method masknet --checkpoint checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --device cuda --visualize --record --dry-wet 1.0 --block-ms 512 --context-ms 2048 --tail-ms 64 --latency high --queue-size 256 --stats-interval 2 --display-ms 6000 --input-device parsec --output-device ath --record-dir results\realtime_recordings --snapshot-dir results\realtime_snapshots
+
+[Porneste realtime fullscreen]
+py -3.12 -m src.tools.realtime_demo --method masknet --checkpoint checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --device cuda --visualize --fullscreen --record --dry-wet 1.0 --block-ms 512 --context-ms 2048 --tail-ms 64 --latency high --queue-size 256 --stats-interval 2 --display-ms 6000 --input-device parsec --output-device laptop --record-dir results\realtime_recordings --snapshot-dir results\realtime_snapshots
+
+[Porneste realtime pe CPU]
+py -3.12 -m src.tools.realtime_demo --method masknet --checkpoint checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --device cpu --visualize --record --dry-wet 1.0 --block-ms 512 --context-ms 2048 --tail-ms 64 --latency high --queue-size 256 --stats-interval 2 --display-ms 6000 --input-device parsec --output-device laptop --record-dir results\realtime_recordings --snapshot-dir results\realtime_snapshots
+
+[Fallback realtime spectral subtraction]
+py -3.12 -m src.tools.realtime_demo --method spectral_subtraction --visualize --record --latency high --block-ms 512 --queue-size 256 --input-device parsec --output-device laptop --record-dir results\realtime_recordings --snapshot-dir results\realtime_snapshots
+
+[Fallback realtime Wiener]
+py -3.12 -m src.tools.realtime_demo --method wiener --visualize --record --latency high --block-ms 512 --queue-size 256 --input-device parsec --output-device laptop --record-dir results\realtime_recordings --snapshot-dir results\realtime_snapshots
+
+[Fallback realtime bypass]
+py -3.12 -m src.tools.realtime_demo --method bypass --visualize --record --latency high --block-ms 512 --queue-size 256 --input-device parsec --output-device laptop --record-dir results\realtime_recordings --snapshot-dir results\realtime_snapshots
+
+[Deschide inregistrarile realtime]
+explorer results\realtime_recordings
+
+[Deschide snapshot-urile realtime]
+explorer results\realtime_snapshots
+
+
+COMPARARE CHECKPOINT-URI SI REZULTATE
+-------------------------------------
+
+[Evalueaza rapid checkpoint-ul final]
+python -m src.tools.project_cli eval-all -- --clean-dir data\voicebank_demand\clean\test --noisy-dir data\voicebank_demand\noisy\test --model checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --output-dir results\evaluation_demo --max-files 20
+
+[Evalueaza complet checkpoint-ul final]
+python -m src.tools.project_cli eval-all -- --clean-dir data\voicebank_demand\clean\test --noisy-dir data\voicebank_demand\noisy\test --model checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --output-dir results\evaluation
+
+[Compara checkpoint-ul final cu ultimul experiment]
+python -m src.tools.project_cli compare-latest -- --clean-dir data\voicebank_demand\clean\test --noisy-dir data\voicebank_demand\noisy\test --reference final=checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --max-files 20
+
+[Compara doua checkpoint-uri explicit]
+python -m src.tools.project_cli compare-checkpoints -- --clean-dir data\voicebank_demand\clean\test --noisy-dir data\voicebank_demand\noisy\test --checkpoint final=checkpoints\train_balanced_res_20260614_091134\masknet_best.pth --checkpoint experiment=checkpoints\NUME_EXPERIMENT\masknet_best.pth --max-files 20
+
+[Inventar checkpoint-uri si rezultate]
+python -m src.tools.project_cli project-inventory
+
+[Rezumat benchmark pentru experimente]
+python -m src.tools.project_cli summarize-benchmarks -- --experiment NUME_EXPERIMENT_1 --experiment NUME_EXPERIMENT_2
+
+[Deschide evaluarea rapida]
+explorer results\evaluation_demo
+
+[Deschide evaluarea completa]
+explorer results\evaluation
+
+[Deschide rezultatele]
+explorer results
+
+[Deschide checkpoint-urile]
+explorer checkpoints

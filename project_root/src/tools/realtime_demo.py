@@ -59,8 +59,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--queue-size", type=int, default=8, help="Internal worker queue size")
     parser.add_argument("--latency", choices=["low", "high"], default="low", help="Requested sounddevice latency")
     parser.add_argument("--stats-interval", type=float, default=5.0, help="Seconds between runtime stats lines")
-    parser.add_argument("--input-device", default=None, help="Input device id or exact name")
-    parser.add_argument("--output-device", default=None, help="Output device id or exact name")
+    parser.add_argument("--input-device", default=None, help="Input device id, exact name, or alias: parsec")
+    parser.add_argument(
+        "--output-device",
+        default=None,
+        help="Output device id, exact name, or alias: ath, speakers, laptop, stream",
+    )
     parser.add_argument("--list-devices", action="store_true", help="List audio devices and exit")
     parser.add_argument("--visualize", action="store_true", help="Open a realtime UI with raw vs enhanced audio")
     parser.add_argument("--record", action="store_true", help="Record raw/enhanced audio while the demo runs")

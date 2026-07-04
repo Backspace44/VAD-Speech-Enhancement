@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import queue
 import threading
 import time
@@ -163,6 +164,7 @@ class RealtimeDenoiseApp:
         self.silent_input_warned = False
         self.last_input_block = np.zeros(block_size, dtype=np.float32)
         self.last_input_lock = threading.Lock()
+        self.microphone_stream_active = False
 
     def run(self) -> int:
         self.enhancer.warmup()
@@ -194,27 +196,43 @@ class RealtimeDenoiseApp:
                 if self.visualizer is not None:
                     self.visualizer.set_active_devices(self.input_device, self.output_device)
                 try:
-                    with sd.InputStream(
-                        samplerate=self.sample_rate,
-                        blocksize=self.block_size,
-                        dtype="float32",
-                        channels=1,
-                        latency=self.latency,
-                        device=self.input_device,
-                        callback=self._input_callback,
-                    ), sd.OutputStream(
-                        samplerate=self.sample_rate,
-                        blocksize=self.block_size,
-                        dtype="float32",
-                        channels=1,
-                        latency=self.latency,
-                        device=self.output_device,
-                        callback=self._output_callback,
-                    ):
-                        last_good_input_device = self.input_device
+                    using_microphone_stream = self._uses_microphone_stream()
+                    self.microphone_stream_active = using_microphone_stream
+                    with contextlib.ExitStack() as stream_stack:
+                        if using_microphone_stream:
+                            stream_stack.enter_context(
+                                sd.InputStream(
+                                    samplerate=self.sample_rate,
+                                    blocksize=self.block_size,
+                                    dtype="float32",
+                                    channels=1,
+                                    latency=self.latency,
+                                    device=self.input_device,
+                                    callback=self._input_callback,
+                                )
+                            )
+                        stream_stack.enter_context(
+                            sd.OutputStream(
+                                samplerate=self.sample_rate,
+                                blocksize=self.block_size,
+                                dtype="float32",
+                                channels=1,
+                                latency=self.latency,
+                                device=self.output_device,
+                                callback=self._output_callback,
+                            )
+                        )
+                        if using_microphone_stream:
+                            last_good_input_device = self.input_device
                         last_good_output_device = self.output_device
                         if self.visualizer is not None:
-                            self.visualizer.set_device_status_message("Audio stream running.")
+                            status_message = "Audio stream running."
+                            if not using_microphone_stream:
+                                status_message = (
+                                    "Audio stream running from speech+noise files. "
+                                    "Microphone input disabled."
+                                )
+                            self.visualizer.set_device_status_message(status_message)
                         while not self.stop_event.is_set():
                             time.sleep(0.2)
                             now = time.time()
@@ -228,11 +246,8 @@ class RealtimeDenoiseApp:
                                     LOGGER.info("Switching VAD mode to %s", requested_vad_mode)
                                     self.enhancer.set_vad_mode(requested_vad_mode)
                                 requested_source_mode = self.visualizer.consume_requested_source_mode()
-                                if requested_source_mode is not None and self.file_source is not None:
-                                    if requested_source_mode == "speech+noise" and not self.file_source.has_file_source_ready():
-                                        LOGGER.warning("speech+noise source selected but no speech file is loaded yet")
-                                    self.file_source.set_source_mode(requested_source_mode)
-                                    LOGGER.info("Switching source mode to %s", requested_source_mode)
+                                if self._apply_requested_source_mode(requested_source_mode):
+                                    restart_stream = True
                                 requested_scenario = self.visualizer.consume_requested_scenario()
                                 if requested_scenario is not None and self.file_source is not None:
                                     distortion_map = self.file_source.apply_scenario_preset(requested_scenario)
@@ -270,7 +285,8 @@ class RealtimeDenoiseApp:
                                         describe_device(self.output_device, "output"),
                                     )
                                     restart_stream = True
-                                self._process_file_requests()
+                                if self._process_file_requests():
+                                    restart_stream = True
                                 if self.recorder is not None and self.visualizer.consume_recording_toggle():
                                     enabled = self.recorder.toggle()
                                     self.visualizer.set_recording_state(enabled)
@@ -284,7 +300,7 @@ class RealtimeDenoiseApp:
                                     self.stop_event.set()
                                     break
                                 if restart_stream:
-                                    LOGGER.info("Restarting stream to apply selected audio devices")
+                                    LOGGER.info("Restarting stream to apply selected source or audio devices")
                                     break
                             if now - last_report >= self.stats_interval:
                                 self._log_stats()
@@ -328,6 +344,9 @@ class RealtimeDenoiseApp:
                             if requested_vad_mode is not None:
                                 LOGGER.info("Switching VAD mode to %s", requested_vad_mode)
                                 self.enhancer.set_vad_mode(requested_vad_mode)
+                            requested_source_mode = self.visualizer.consume_requested_source_mode()
+                            if self._apply_requested_source_mode(requested_source_mode):
+                                restart_stream = True
                             if self.visualizer.consume_file_play_toggle() and self.file_source is not None:
                                 file_playing = self.file_source.toggle_file_playing()
                                 self.visualizer.set_file_playing(file_playing)
@@ -343,7 +362,8 @@ class RealtimeDenoiseApp:
                                     describe_device(self.output_device, "output"),
                                 )
                                 restart_stream = True
-                            self._process_file_requests()
+                            if self._process_file_requests():
+                                restart_stream = True
                             self.visualizer.refresh(self.stats, self.enhancer.method)
                             if self.visualizer.closed or self.visualizer.stop_requested:
                                 LOGGER.info("Visualization window closed, stopping realtime demo")
@@ -369,16 +389,43 @@ class RealtimeDenoiseApp:
 
         return 0
 
-    def _process_file_requests(self) -> None:
+    def _apply_requested_source_mode(self, requested_source_mode: str | None) -> bool:
+        if requested_source_mode is None or self.file_source is None:
+            return False
+
+        was_using_microphone = self._uses_microphone_stream()
+        previous_source_mode = self.file_source.source_mode
+        if requested_source_mode == "speech+noise" and not self.file_source.has_file_source_ready():
+            LOGGER.warning("speech+noise source selected but no speech file is loaded yet")
+        recording_was_enabled = self._pause_recording()
+        try:
+            if requested_source_mode != previous_source_mode:
+                self._reset_recording_session(
+                    f"source switch from {previous_source_mode} to {requested_source_mode}"
+                )
+            self.file_source.set_source_mode(requested_source_mode)
+        finally:
+            self._resume_recording(recording_was_enabled)
+        LOGGER.info("Switching source mode to %s", requested_source_mode)
+        return was_using_microphone != self._uses_microphone_stream()
+
+    def _process_file_requests(self) -> bool:
         if self.visualizer is None or self.file_source is None:
-            return
+            return False
+
+        was_using_microphone = self._uses_microphone_stream()
 
         if self.visualizer.consume_speech_file_request():
             path = choose_audio_file("Select speech file")
             if path is not None:
-                self.file_source.load_speech_file(path)
-                self.file_source.set_file_playing(True)
-                self.file_source.set_source_mode("speech+noise")
+                recording_was_enabled = self._pause_recording()
+                try:
+                    self._reset_recording_session("speech+noise file load")
+                    self.file_source.load_speech_file(path)
+                    self.file_source.set_file_playing(True)
+                    self.file_source.set_source_mode("speech+noise")
+                finally:
+                    self._resume_recording(recording_was_enabled)
                 status = self.file_source.get_status()
                 self.visualizer.set_loaded_files(status["speech_file"], status["noise_file"])
                 self.visualizer.set_file_playing(True)
@@ -389,9 +436,14 @@ class RealtimeDenoiseApp:
         if self.visualizer.consume_noise_file_request():
             path = choose_audio_file("Select noise file")
             if path is not None:
-                self.file_source.load_noise_file(path)
-                self.file_source.set_file_playing(True)
-                self.file_source.set_source_mode("speech+noise")
+                recording_was_enabled = self._pause_recording()
+                try:
+                    self._reset_recording_session("speech+noise file load")
+                    self.file_source.load_noise_file(path)
+                    self.file_source.set_file_playing(True)
+                    self.file_source.set_source_mode("speech+noise")
+                finally:
+                    self._resume_recording(recording_was_enabled)
                 status = self.file_source.get_status()
                 self.visualizer.set_loaded_files(status["speech_file"], status["noise_file"])
                 self.visualizer.set_file_playing(True)
@@ -399,18 +451,52 @@ class RealtimeDenoiseApp:
                 self.visualizer.set_source_mode("speech+noise")
                 LOGGER.info("Loaded noise file: %s", path)
 
-    def _audio_callback(self, indata, outdata, frames, _time_info, status) -> None:
-        self.stats.callbacks += 1
-        if status:
-            self.stats.status_warnings += 1
-            LOGGER.warning("Audio callback status: %s", status)
+        return was_using_microphone != self._uses_microphone_stream()
 
-        input_block = np.copy(indata[:, 0])
-        if self.file_source is not None:
+    def _reset_recording_session(self, reason: str) -> None:
+        if self.recorder is None:
+            return
+        saved_paths, new_dir = self.recorder.reset()
+        if saved_paths is not None:
+            raw_path, enhanced_path = saved_paths
+            LOGGER.info(
+                "Saved realtime recording before %s: raw=%s enhanced=%s",
+                reason,
+                raw_path,
+                enhanced_path,
+            )
+        LOGGER.info("Started new realtime recording after %s: %s", reason, new_dir)
+
+    def _pause_recording(self) -> bool:
+        if self.recorder is None:
+            return False
+        was_enabled = self.recorder.is_enabled()
+        if was_enabled:
+            self.recorder.stop()
+        return was_enabled
+
+    def _resume_recording(self, was_enabled: bool) -> None:
+        if self.recorder is not None and was_enabled:
+            self.recorder.start()
+
+    def _uses_microphone_stream(self) -> bool:
+        return self.file_source is None or self.file_source.source_mode == "microphone"
+
+    def _select_input_block(self, microphone_block: np.ndarray | None, frames: int) -> np.ndarray:
+        if self.file_source is not None and self.file_source.source_mode == "speech+noise":
             file_block = self.file_source.get_block(frames)
             if file_block is not None:
-                input_block = file_block
-        self._update_input_activity_warning(input_block)
+                return file_block
+            return np.zeros(frames, dtype=np.float32)
+        if microphone_block is None:
+            return np.zeros(frames, dtype=np.float32)
+        return np.copy(microphone_block)
+
+    def _remember_input_block(self, input_block: np.ndarray) -> None:
+        with self.last_input_lock:
+            self.last_input_block = np.copy(input_block)
+
+    def _enqueue_input_block(self, input_block: np.ndarray) -> None:
         try:
             self.input_queue.put_nowait(input_block)
         except queue.Full:
@@ -423,6 +509,17 @@ class RealtimeDenoiseApp:
                 self.input_queue.put_nowait(input_block)
             except queue.Full:
                 pass
+
+    def _audio_callback(self, indata, outdata, frames, _time_info, status) -> None:
+        self.stats.callbacks += 1
+        if status:
+            self.stats.status_warnings += 1
+            LOGGER.warning("Audio callback status: %s", status)
+
+        input_block = self._select_input_block(indata[:, 0], frames)
+        self._remember_input_block(input_block)
+        self._update_input_activity_warning(input_block)
+        self._enqueue_input_block(input_block)
 
         try:
             output_block = self.output_queue.get_nowait()
@@ -446,36 +543,25 @@ class RealtimeDenoiseApp:
         if self.visualizer is not None:
             self.visualizer.push(input_block, output_block)
 
-    def _input_callback(self, indata, _frames, _time_info, status) -> None:
+    def _input_callback(self, indata, frames, _time_info, status) -> None:
         self.stats.callbacks += 1
         if status:
             self.stats.status_warnings += 1
             LOGGER.warning("Audio input callback status: %s", status)
 
-        input_block = np.copy(indata[:, 0])
-        if self.file_source is not None:
-            file_block = self.file_source.get_block(len(input_block))
-            if file_block is not None:
-                input_block = file_block
-
-        with self.last_input_lock:
-            self.last_input_block = np.copy(input_block)
-
+        input_block = self._select_input_block(indata[:, 0], frames)
+        self._remember_input_block(input_block)
         self._update_input_activity_warning(input_block)
-        try:
-            self.input_queue.put_nowait(input_block)
-        except queue.Full:
-            self.stats.input_overflows += 1
-            try:
-                _ = self.input_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self.input_queue.put_nowait(input_block)
-            except queue.Full:
-                pass
+        self._enqueue_input_block(input_block)
 
     def _output_callback(self, outdata, frames, _time_info, status) -> None:
+        if not self.microphone_stream_active:
+            self.stats.callbacks += 1
+            input_block = self._select_input_block(None, frames)
+            self._remember_input_block(input_block)
+            self._update_input_activity_warning(input_block)
+            self._enqueue_input_block(input_block)
+
         if status:
             self.stats.status_warnings += 1
             LOGGER.warning("Audio output callback status: %s", status)
